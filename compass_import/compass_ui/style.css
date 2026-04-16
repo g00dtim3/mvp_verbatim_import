@@ -1,30 +1,25 @@
 /* ═══════════════════════════════════════════════════════════
    Compass · Consumer Voice — Import Pipeline
-   Design System CSS — Streamlit injection
-   v2.1 — Fix data editor / dropdowns
+   Design System CSS v3.0
+   Stratégie : thème natif Streamlit via config.toml
+   CSS uniquement pour les composants custom Compass
 ═══════════════════════════════════════════════════════════ */
 
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
 
-/* ── Tokens — Light mode ──────────────────────────────────── */
+/* ── Tokens ───────────────────────────────────────────────── */
 :root {
   --c-deep:       #0E3A5D;
   --c-blue:       #1F6ED4;
-  --c-sky:        #5FA8FF;
   --c-cyan:       #2EC4C7;
   --c-cyan-light: #E0F7F7;
-
-  --c-bg:        #F4F7FA;
-  --c-surface:   #FFFFFF;
-  --c-surface-2: #EEF2F7;
-
-  --c-border:   #C8D6E5;
-  --c-border-2: #A8BDD0;
-
-  --c-text:   #1A2B3C;
-  --c-text-2: #3D5166;
-  --c-text-3: #5C7A94;
-
+  --c-bg:         #F4F7FA;
+  --c-surface:    #FFFFFF;
+  --c-surface-2:  #EEF2F7;
+  --c-border:     #C8D6E5;
+  --c-text:       #1A2B3C;
+  --c-text-2:     #3D5166;
+  --c-text-3:     #5C7A94;
   --c-success:    #16A34A;
   --c-success-bg: #DCFCE7;
   --c-warning:    #D97706;
@@ -33,113 +28,40 @@
   --c-error-bg:   #FEE2E2;
   --c-info:       #1D4ED8;
   --c-info-bg:    #EFF6FF;
-
   --c-sidebar:        #0C3352;
   --c-sidebar-border: rgba(255,255,255,0.08);
   --c-sidebar-text:   #A8C0D6;
-  --c-sidebar-active: #2EC4C7;
-
   --shadow-sm: 0 1px 3px rgba(14,58,93,0.08);
   --shadow-md: 0 4px 12px rgba(14,58,93,0.10);
-  --shadow-lg: 0 8px 24px rgba(14,58,93,0.14);
-
-  --r-sm: 6px;
-  --r-md: 10px;
-  --r-lg: 14px;
-  --r-xl: 20px;
-}
-
-/* ── Tokens — Dark mode ───────────────────────────────────── */
-[data-theme="dark"] {
-  --c-deep:      #C8DCF0;
-  --c-blue:      #5FA8FF;
-  --c-sky:       #93C5FD;
-  --c-cyan:      #2EC4C7;
-  --c-cyan-light:#0D3A3B;
-
-  --c-bg:        #08111E;
-  --c-surface:   #0F1E30;
-  --c-surface-2: #172840;
-
-  --c-border:   #1E3A54;
-  --c-border-2: #2A4E6E;
-
-  --c-text:   #DCE8F4;
-  --c-text-2: #96B4CC;
-  --c-text-3: #5E82A0;
-
-  --c-success:    #34D399;
-  --c-success-bg: #052E16;
-  --c-warning:    #FBBF24;
-  --c-warning-bg: #3D1F00;
-  --c-error:      #F87171;
-  --c-error-bg:   #3D0000;
-  --c-info:       #60A5FA;
-  --c-info-bg:    #0F2A50;
-
-  --c-sidebar:        #06101A;
-  --c-sidebar-border: rgba(255,255,255,0.06);
-  --c-sidebar-text:   #5E82A0;
-  --c-sidebar-active: #2EC4C7;
-
-  --shadow-sm: 0 1px 3px rgba(0,0,0,0.35);
-  --shadow-md: 0 4px 12px rgba(0,0,0,0.45);
-  --shadow-lg: 0 8px 24px rgba(0,0,0,0.55);
+  --r-sm: 6px; --r-md: 10px; --r-lg: 14px;
 }
 
 /* ═══════════════════════════════════════════════════════════
-   BASE
-   NOTE : pas de règle globale sur div/span — trop risqué
-   sur les composants canvas (data editor, glide grid)
+   FONT — injection Inter sur le shell Streamlit uniquement
 ═══════════════════════════════════════════════════════════ */
 
-*, *::before, *::after { box-sizing: border-box; }
-
 html, body, .stApp {
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif !important;
-  background-color: var(--c-bg) !important;
-  color: var(--c-text) !important;
-  font-size: 14px;
-  line-height: 1.6;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif !important;
 }
 
 .main .block-container {
   padding: 2rem 2.5rem !important;
   max-width: 1280px !important;
-  background: var(--c-bg) !important;
-}
-
-/* Texte ciblé uniquement — pas de div/span globaux */
-.stApp p     { color: var(--c-text-2); }
-.stApp label { color: var(--c-text) !important; }
-
-h1 { font-size: 26px !important; font-weight: 700 !important; color: var(--c-deep) !important; line-height: 1.3 !important; }
-h2 { font-size: 19px !important; font-weight: 600 !important; color: var(--c-deep) !important; }
-h3 { font-size: 15px !important; font-weight: 600 !important; color: var(--c-deep) !important; }
-p  { color: var(--c-text-2) !important; }
-
-hr {
-  border: none !important;
-  border-top: 1px solid var(--c-border) !important;
-  margin: 1.5rem 0 !important;
 }
 
 /* ═══════════════════════════════════════════════════════════
    SIDEBAR
+   Fond sombre Compass — on surcharge uniquement le fond
+   et les liens de navigation, pas les composants natifs
 ═══════════════════════════════════════════════════════════ */
 
 [data-testid="stSidebar"] {
   background-color: var(--c-sidebar) !important;
-  border-right: 1px solid var(--c-sidebar-border) !important;
 }
 
-[data-testid="stSidebar"],
-[data-testid="stSidebar"] p,
-[data-testid="stSidebar"] span,
-[data-testid="stSidebar"] div,
-[data-testid="stSidebar"] li,
-[data-testid="stSidebar"] label {
-  color: var(--c-sidebar-text) !important;
+/* Texte général sidebar */
+[data-testid="stSidebar"] *:not(button):not(input):not(select) {
+  color: var(--c-sidebar-text);
 }
 
 [data-testid="stSidebar"] h1,
@@ -149,57 +71,48 @@ hr {
   color: #FFFFFF !important;
 }
 
-[data-testid="stSidebarNav"] { padding: 4px 8px !important; }
-
-[data-testid="stSidebarNav"] a,
-[data-testid="stSidebarNav"] a span {
-  color: var(--c-sidebar-text) !important;
+/* Navigation pages */
+[data-testid="stSidebarNav"] a {
   border-radius: var(--r-sm) !important;
-  padding: 8px 12px !important;
-  font-size: 13px !important;
-  font-weight: 500 !important;
-  transition: all 150ms ease !important;
+  transition: background 150ms ease !important;
+}
+[data-testid="stSidebarNav"] a,
+[data-testid="stSidebarNav"] a * {
+  color: var(--c-sidebar-text) !important;
   text-decoration: none !important;
 }
-
 [data-testid="stSidebarNav"] a:hover,
-[data-testid="stSidebarNav"] a:hover span {
+[data-testid="stSidebarNav"] a:hover * {
   background: rgba(46,196,199,0.12) !important;
   color: #FFFFFF !important;
 }
-
 [data-testid="stSidebarNav"] a[aria-current="page"],
-[data-testid="stSidebarNav"] a[aria-current="page"] span {
+[data-testid="stSidebarNav"] a[aria-current="page"] * {
   background: rgba(46,196,199,0.18) !important;
   color: var(--c-cyan) !important;
   font-weight: 600 !important;
   border-left: 3px solid var(--c-cyan) !important;
 }
 
-/* Supprimer le double cadre sur les boutons nav sidebar */
-[data-testid="stSidebarNav"] .stButton > button,
-[data-testid="stSidebarNav"] .stButton > button:focus,
-[data-testid="stSidebarNav"] .stButton > button:active {
+/* ── Boutons dans la sidebar — supprimer double cadre ─────── */
+/* Le double cadre vient du wrapper div + du button lui-même  */
+[data-testid="stSidebar"] .stButton > div,
+[data-testid="stSidebar"] .stButton > div > button {
   border: none !important;
   outline: none !important;
   box-shadow: none !important;
 }
 
-/* Supprimer l'outline focus global qui crée le double cadre */
-.stButton > button:focus:not(:focus-visible) {
+/* Supprimer outline focus sur TOUS les boutons après clic */
+.stButton > button:focus:not(:focus-visible),
+.stButton > div:focus:not(:focus-visible) {
   outline: none !important;
   box-shadow: none !important;
 }
 
-/* Focus visible uniquement au clavier — accessibilité */
-.stButton > button:focus-visible {
-  outline: 2px solid var(--c-blue) !important;
-  outline-offset: 2px !important;
-  box-shadow: none !important;
-}
-
 /* ═══════════════════════════════════════════════════════════
-   BOUTONS
+   BOUTONS — style Compass minimal
+   On ne touche pas aux wrappers div pour éviter le double cadre
 ═══════════════════════════════════════════════════════════ */
 
 .stButton > button {
@@ -207,207 +120,24 @@ hr {
   font-weight: 500 !important;
   font-size: 13px !important;
   border-radius: var(--r-md) !important;
-  padding: 8px 18px !important;
   transition: all 150ms ease !important;
-  cursor: pointer !important;
-  letter-spacing: 0.01em !important;
 }
 
-.stButton > button[kind="primary"],
-.stButton > button:not([kind]) {
+/* Primary */
+.stButton > button[kind="primary"] {
   background-color: var(--c-blue) !important;
   color: #FFFFFF !important;
   border: none !important;
-  box-shadow: var(--shadow-sm) !important;
 }
-.stButton > button[kind="primary"] *,
-.stButton > button:not([kind]) * { color: #FFFFFF !important; }
-.stButton > button[kind="primary"]:hover,
-.stButton > button:not([kind]):hover {
+.stButton > button[kind="primary"]:hover {
   background-color: #1858B0 !important;
-  box-shadow: var(--shadow-md) !important;
   transform: translateY(-1px) !important;
 }
 
-.stButton > button[kind="secondary"] {
-  background-color: var(--c-surface) !important;
-  color: var(--c-deep) !important;
-  border: 1px solid var(--c-border) !important;
-  box-shadow: none !important;
-}
-.stButton > button[kind="secondary"] * { color: var(--c-deep) !important; }
-.stButton > button[kind="secondary"]:hover {
-  background-color: var(--c-surface-2) !important;
-  border-color: var(--c-border-2) !important;
-}
-
+/* Download */
 .stDownloadButton > button {
-  background-color: var(--c-surface) !important;
-  color: var(--c-blue) !important;
-  border: 1px solid var(--c-blue) !important;
   font-family: 'Inter', sans-serif !important;
-  font-weight: 500 !important;
-  font-size: 13px !important;
   border-radius: var(--r-md) !important;
-}
-.stDownloadButton > button * { color: var(--c-blue) !important; }
-.stDownloadButton > button:hover { background-color: var(--c-info-bg) !important; }
-
-/* ═══════════════════════════════════════════════════════════
-   INPUTS
-═══════════════════════════════════════════════════════════ */
-
-.stTextInput label,
-.stSelectbox label,
-.stMultiSelect label,
-.stTextArea label,
-.stDateInput label,
-.stRadio label,
-.stCheckbox label,
-.stFileUploader label {
-  font-size: 13px !important;
-  font-weight: 500 !important;
-  color: var(--c-text) !important;
-}
-
-.stTextInput > div > div > input,
-.stTextArea > div > div > textarea {
-  font-family: 'Inter', sans-serif !important;
-  background: var(--c-surface) !important;
-  border: 1px solid var(--c-border) !important;
-  border-radius: var(--r-md) !important;
-  color: var(--c-text) !important;
-  font-size: 13px !important;
-}
-.stTextInput > div > div > input:focus,
-.stTextArea > div > div > textarea:focus {
-  border-color: var(--c-blue) !important;
-  box-shadow: 0 0 0 3px rgba(31,110,212,0.12) !important;
-  outline: none !important;
-}
-
-.stSelectbox > div > div,
-.stMultiSelect > div > div {
-  background: var(--c-surface) !important;
-  border: 1px solid var(--c-border) !important;
-  border-radius: var(--r-md) !important;
-  color: var(--c-text) !important;
-}
-
-.stRadio label,
-.stCheckbox label { color: var(--c-text) !important; font-size: 13px !important; }
-
-[data-testid="stFileUploader"] {
-  background: var(--c-surface) !important;
-  border: 2px dashed var(--c-border) !important;
-  border-radius: var(--r-lg) !important;
-}
-[data-testid="stFileUploader"]:hover { border-color: var(--c-blue) !important; }
-[data-testid="stFileUploader"] span,
-[data-testid="stFileUploader"] p     { color: var(--c-text-2) !important; }
-
-/* ═══════════════════════════════════════════════════════════
-   DATAFRAME (st.dataframe — lecture seule)
-═══════════════════════════════════════════════════════════ */
-
-[data-testid="stDataFrame"],
-[data-testid="stTable"] {
-  background: var(--c-surface) !important;
-  border: 1px solid var(--c-border) !important;
-  border-radius: var(--r-lg) !important;
-  overflow: hidden !important;
-  box-shadow: var(--shadow-sm) !important;
-}
-.stDataFrame thead th {
-  background: var(--c-surface-2) !important;
-  color: var(--c-text-2) !important;
-  font-size: 11px !important;
-  font-weight: 700 !important;
-  text-transform: uppercase !important;
-  letter-spacing: 0.05em !important;
-  border-bottom: 1px solid var(--c-border) !important;
-}
-.stDataFrame tbody td {
-  font-size: 13px !important;
-  color: var(--c-text) !important;
-  border-bottom: 1px solid var(--c-border) !important;
-}
-
-/* ═══════════════════════════════════════════════════════════
-   DATA EDITOR (st.data_editor — éditable)
-   Le canvas Glide Data Grid ne répond PAS au CSS.
-   On cible uniquement les overlays HTML flottants.
-═══════════════════════════════════════════════════════════ */
-
-/* Conteneur wrapper — fond neutre */
-[data-testid="stDataFrameResizable"] {
-  background: var(--c-surface) !important;
-  border: 1px solid var(--c-border) !important;
-  border-radius: var(--r-lg) !important;
-  overflow: hidden !important;
-}
-
-/* ── Dropdown popover flottant (menu de sélection cellule) ── */
-/* Cibler uniquement [data-baseweb="popover"] pour ne pas
-   toucher aux autres composants BaseWeb de Streamlit        */
-
-/* Remplacer le bloc [data-baseweb="popover"] existant par celui-ci */
-
-/* Portal-level — Streamlit monte les popover au niveau du body */
-body > div[data-baseweb="layer"],
-body > div[data-baseweb="layer"] [data-baseweb="popover"],
-body > div[data-baseweb="layer"] [data-baseweb="menu"],
-[data-baseweb="popover"],
-[data-baseweb="popover"] > div {
-  background: #FFFFFF !important;
-  color: #1A2B3C !important;
-  color-scheme: light !important;
-}
-
-body > div[data-baseweb="layer"] ul,
-body > div[data-baseweb="layer"] [role="listbox"],
-[data-baseweb="popover"] ul,
-[data-baseweb="popover"] [role="listbox"] {
-  background: #FFFFFF !important;
-  padding: 4px !important;
-}
-
-body > div[data-baseweb="layer"] li,
-body > div[data-baseweb="layer"] [role="option"],
-[data-baseweb="popover"] li,
-[data-baseweb="popover"] [role="option"] {
-  background: #FFFFFF !important;
-  color: #1A2B3C !important;
-  font-size: 13px !important;
-  font-family: 'Inter', sans-serif !important;
-  border-radius: 6px !important;
-  padding: 8px 12px !important;
-}
-
-body > div[data-baseweb="layer"] li:hover,
-body > div[data-baseweb="layer"] [role="option"]:hover,
-[data-baseweb="popover"] li:hover,
-[data-baseweb="popover"] [role="option"]:hover {
-  background: #EEF2F7 !important;
-  color: #1F6ED4 !important;
-}
-
-/* Option actuellement sélectionnée (était rouge/rouge foncé) */
-body > div[data-baseweb="layer"] [aria-selected="true"],
-[data-baseweb="popover"] [aria-selected="true"] {
-  background: #EFF6FF !important;
-  color: #1D4ED8 !important;
-  font-weight: 500 !important;
-}
-
-/* Champ de recherche dans le popover */
-body > div[data-baseweb="layer"] input,
-[data-baseweb="popover"] input {
-  background: #FFFFFF !important;
-  color: #1A2B3C !important;
-  border: 1px solid #C8D6E5 !important;
-  border-radius: 6px !important;
-  font-size: 13px !important;
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -421,79 +151,15 @@ body > div[data-baseweb="layer"] input,
   padding: 1.25rem 1.5rem !important;
   box-shadow: var(--shadow-sm) !important;
 }
-[data-testid="stMetricValue"] {
-  font-size: 28px !important;
-  font-weight: 700 !important;
-  color: var(--c-blue) !important;
-}
-[data-testid="stMetricLabel"] {
-  font-size: 11px !important;
-  font-weight: 600 !important;
-  color: var(--c-text-2) !important;
-  text-transform: uppercase !important;
-  letter-spacing: 0.05em !important;
-}
 
 /* ═══════════════════════════════════════════════════════════
-   TABS
+   SCROLLBAR
 ═══════════════════════════════════════════════════════════ */
-
-.stTabs [data-baseweb="tab-list"] {
-  background: transparent !important;
-  border-bottom: 1px solid var(--c-border) !important;
-  gap: 0 !important;
-}
-.stTabs [data-baseweb="tab"] {
-  font-family: 'Inter', sans-serif !important;
-  font-size: 13px !important;
-  font-weight: 500 !important;
-  color: var(--c-text-2) !important;
-  padding: 10px 20px !important;
-  border-bottom: 2px solid transparent !important;
-  background: transparent !important;
-  transition: all 150ms ease !important;
-}
-.stTabs [data-baseweb="tab"]:hover { color: var(--c-blue) !important; }
-.stTabs [aria-selected="true"] {
-  color: var(--c-blue) !important;
-  border-bottom-color: var(--c-blue) !important;
-  font-weight: 600 !important;
-}
-.stTabs [data-baseweb="tab-panel"] { padding-top: 1.5rem !important; }
-
-/* ═══════════════════════════════════════════════════════════
-   PROGRESS / ALERTS / MISC
-═══════════════════════════════════════════════════════════ */
-
-.stProgress > div > div {
-  background: var(--c-border) !important;
-  border-radius: 999px !important;
-  height: 6px !important;
-}
-.stProgress > div > div > div {
-  background: var(--c-blue) !important;
-  border-radius: 999px !important;
-}
-
-.stAlert { border-radius: var(--r-md) !important; font-size: 13px !important; }
-.stAlert p, .stAlert span { color: inherit !important; }
-
-.streamlit-expanderHeader {
-  font-family: 'Inter', sans-serif !important;
-  font-weight: 500 !important;
-  font-size: 13px !important;
-  color: var(--c-text) !important;
-  background: var(--c-surface) !important;
-  border: 1px solid var(--c-border) !important;
-  border-radius: var(--r-md) !important;
-}
-
-.stSpinner > div { border-top-color: var(--c-blue) !important; }
 
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--c-border); border-radius: 999px; }
-::-webkit-scrollbar-thumb:hover { background: var(--c-border-2); }
+::-webkit-scrollbar-thumb:hover { background: #A8BDD0; }
 
 /* ═══════════════════════════════════════════════════════════
    ANIMATIONS
@@ -507,7 +173,6 @@ body > div[data-baseweb="layer"] input,
   0%   { background-position: 200% 0; }
   100% { background-position: -200% 0; }
 }
-
 .compass-fade-in { animation: fadeSlideUp 250ms ease-out forwards; }
 .skeleton {
   background: linear-gradient(90deg, var(--c-border) 25%, var(--c-surface-2) 50%, var(--c-border) 75%);
@@ -518,6 +183,8 @@ body > div[data-baseweb="layer"] input,
 
 /* ═══════════════════════════════════════════════════════════
    COMPOSANTS COMPASS CUSTOM
+   Ces classes sont injectées via st.markdown — pas de conflit
+   avec les composants natifs Streamlit
 ═══════════════════════════════════════════════════════════ */
 
 /* ── Page header ──────────────────────────────────────────── */
@@ -557,7 +224,7 @@ body > div[data-baseweb="layer"] input,
   flex-shrink: 0;
 }
 
-/* ── Metric cards ─────────────────────────────────────────── */
+/* ── Metric cards custom ──────────────────────────────────── */
 .compass-metrics {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
@@ -600,31 +267,26 @@ body > div[data-baseweb="layer"] input,
   border-radius: 999px;
   font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.02em;
   white-space: nowrap;
   line-height: 1.4;
 }
 .badge::before {
   content: '';
   display: inline-block;
-  width: 6px;
-  height: 6px;
+  width: 6px; height: 6px;
   border-radius: 50%;
   background: currentColor;
   flex-shrink: 0;
 }
 .badge-no-dot::before { display: none; }
 
-.badge-success   { background: var(--c-success-bg); color: var(--c-success); }
-.badge-error     { background: var(--c-error-bg);   color: var(--c-error); }
-.badge-warning   { background: var(--c-warning-bg); color: var(--c-warning); }
-.badge-info      { background: var(--c-info-bg);    color: var(--c-info); }
+.badge-success   { background: var(--c-success-bg); color: #14532D; }
+.badge-error     { background: var(--c-error-bg);   color: #7F1D1D; }
+.badge-warning   { background: var(--c-warning-bg); color: #6B3200; }
+.badge-info      { background: var(--c-info-bg);    color: #1E3A8A; }
 .badge-cyan      { background: var(--c-cyan-light);  color: #0A6E70; }
 .badge-gray      { background: var(--c-surface-2);  color: var(--c-text-2); border: 1px solid var(--c-border); }
 .badge-duplicate { background: #EDE9FE; color: #5B21B6; }
-
-[data-theme="dark"] .badge-cyan      { color: var(--c-cyan); }
-[data-theme="dark"] .badge-duplicate { background: #2D1B6E; color: #C4B5FD; }
 
 /* ── Alertes custom ───────────────────────────────────────── */
 .compass-alert {
@@ -646,12 +308,6 @@ body > div[data-baseweb="layer"] input,
 .compass-alert.warning   { background: var(--c-warning-bg); border-color: var(--c-warning); color: #6B3200; }
 .compass-alert.info      { background: var(--c-info-bg);    border-color: var(--c-info);    color: #1E3A8A; }
 .compass-alert.duplicate { background: #EDE9FE; border-color: #7C3AED; color: #3B0764; }
-
-[data-theme="dark"] .compass-alert.success   { color: #86EFAC; }
-[data-theme="dark"] .compass-alert.error     { color: #FCA5A5; }
-[data-theme="dark"] .compass-alert.warning   { color: #FCD34D; }
-[data-theme="dark"] .compass-alert.info      { color: #93C5FD; }
-[data-theme="dark"] .compass-alert.duplicate { color: #C4B5FD; }
 
 /* ── Section card ─────────────────────────────────────────── */
 .compass-card {
@@ -698,16 +354,12 @@ body > div[data-baseweb="layer"] input,
 .compass-step.active { background: var(--c-info-bg);    color: var(--c-blue);    font-weight: 600; }
 .compass-step.done   { background: var(--c-success-bg); color: var(--c-success); }
 .compass-step-num {
-  width: 20px;
-  height: 20px;
+  width: 20px; height: 20px;
   border-radius: 50%;
   background: var(--c-border);
   color: var(--c-text-3);
-  font-size: 10px;
-  font-weight: 700;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  font-size: 10px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
   flex-shrink: 0;
 }
 .compass-step.active .compass-step-num { background: var(--c-blue);    color: #FFF; }
@@ -726,10 +378,8 @@ body > div[data-baseweb="layer"] input,
 .compass-progress-sub   { font-size: 13px; color: var(--c-text-2); margin-bottom: 1.5rem; }
 .compass-progress-bar-wrap {
   background: var(--c-border);
-  border-radius: 999px;
-  height: 8px;
-  overflow: hidden;
-  margin-bottom: 8px;
+  border-radius: 999px; height: 8px;
+  overflow: hidden; margin-bottom: 8px;
 }
 .compass-progress-bar {
   height: 100%;
@@ -766,8 +416,7 @@ body > div[data-baseweb="layer"] input,
 .compass-log-table thead th {
   background: var(--c-surface-2);
   color: var(--c-text-2);
-  font-size: 11px;
-  font-weight: 700;
+  font-size: 11px; font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.06em;
   padding: 10px 14px;
@@ -792,18 +441,13 @@ body > div[data-baseweb="layer"] input,
   margin-bottom: 8px;
 }
 .compass-sidebar-brand {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: var(--c-cyan);
-  margin-bottom: 2px;
+  font-size: 10px; font-weight: 700;
+  letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--c-cyan); margin-bottom: 2px;
 }
 .compass-sidebar-title {
-  font-size: 14px;
-  font-weight: 700;
-  color: #FFFFFF;
-  line-height: 1.35;
+  font-size: 14px; font-weight: 700;
+  color: #FFFFFF; line-height: 1.35;
 }
 .compass-sidebar-version {
   font-size: 10px;
@@ -811,10 +455,8 @@ body > div[data-baseweb="layer"] input,
   margin-top: 4px;
 }
 .compass-sidebar-section {
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  font-size: 10px; font-weight: 700;
+  letter-spacing: 0.1em; text-transform: uppercase;
   color: rgba(255,255,255,0.22);
   padding: 16px 16px 6px;
 }
@@ -822,15 +464,13 @@ body > div[data-baseweb="layer"] input,
 /* ── Theme toggle ─────────────────────────────────────────── */
 .compass-theme-toggle {
   position: fixed;
-  top: 14px;
-  right: 16px;
+  top: 14px; right: 16px;
   z-index: 9999;
   background: var(--c-surface);
   border: 1px solid var(--c-border);
   border-radius: var(--r-md);
   padding: 6px 12px;
-  font-size: 12px;
-  font-weight: 500;
+  font-size: 12px; font-weight: 500;
   cursor: pointer;
   color: var(--c-text-2);
   box-shadow: var(--shadow-sm);
@@ -854,10 +494,8 @@ body > div[data-baseweb="layer"] input,
   background: var(--c-border);
 }
 .compass-divider span {
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
+  font-size: 11px; font-weight: 700;
+  letter-spacing: 0.08em; text-transform: uppercase;
   color: var(--c-text-3);
   white-space: nowrap;
 }
