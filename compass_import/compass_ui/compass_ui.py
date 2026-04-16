@@ -35,53 +35,43 @@ def _html(markup: str) -> None:
 # ─── CSS injection ─────────────────────────────────────────────────────────────
 
 def inject_css():
-    """Injecte le design system Compass dans la page Streamlit.
+    """Injecte le design system Compass et applique le thème actif.
 
-    Note : Streamlit bloque les balises <script> dans st.markdown().
-    Le JavaScript de restauration du thème est injecté via st.iframe()
-    (iframe height=0) pour contourner cette limite.
+    Le thème (light/dark) est stocké dans st.session_state.compass_theme.
+    En mode sombre, les sélecteurs [data-theme="dark"] du CSS sont remplacés
+    par :root — le bloc dark apparaît après le bloc light, donc la cascade CSS
+    standard l'emporte sans aucune iframe ni JavaScript.
     """
+    if "compass_theme" not in st.session_state:
+        st.session_state.compass_theme = "light"
+
     css_path = Path(__file__).parent / "style.css"
     with open(css_path) as f:
         css = f.read()
 
-    # CSS uniquement (les <script> sont stripés par Streamlit)
-    st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
+    if st.session_state.compass_theme == "dark":
+        # Remap [data-theme="dark"] → :root so dark variables override light
+        # ones via normal CSS cascade (dark block is declared after light block).
+        css = css.replace('[data-theme="dark"]', ':root')
 
-    # Restauration du thème depuis localStorage via une iframe height=0.
-    # window.parent.document cible le document Streamlit parent.
-    # height="content" → hauteur déterminée par le contenu rendu ;
-    # un <script> seul ne produit aucun contenu visuel, donc l'iframe
-    # n'occupe pas d'espace tout en exécutant le script.
-    st.iframe(
-        """
-        <script>
-        (function () {
-            var theme = localStorage.getItem('compass_theme') || 'light';
-            window.parent.document.documentElement.setAttribute('data-theme', theme);
-        })();
-        </script>
-        """,
-        height="content",
-    )
+    st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
 
 
 def theme_toggle():
     """
-    Bouton switch Light / Dark mode.
-    À placer en haut de chaque page, avant le contenu.
+    Bouton switch Light / Dark mode (sidebar).
+    Utilise st.session_state pour persister le thème sur toutes les pages
+    de la session — sans iframe, sans JavaScript externe.
     """
-    st.markdown(
-        '<button class="compass-theme-toggle" onclick="'
-        "const html=document.documentElement;"
-        "const cur=html.getAttribute('data-theme')||'light';"
-        "const nxt=cur==='light'?'dark':'light';"
-        "html.setAttribute('data-theme',nxt);"
-        "localStorage.setItem('compass_theme',nxt);"
-        "this.textContent=nxt==='dark'?'\u2600 Light':'\u25d1 Dark';"
-        '">\u25d1 Dark</button>',
-        unsafe_allow_html=True,
-    )
+    if "compass_theme" not in st.session_state:
+        st.session_state.compass_theme = "light"
+
+    current = st.session_state.compass_theme
+    label   = "☀ Light" if current == "dark" else "◑ Dark"
+
+    if st.sidebar.button(label, key="compass_theme_toggle", use_container_width=False):
+        st.session_state.compass_theme = "dark" if current == "light" else "light"
+        st.rerun()
 
 
 # ─── Sidebar ────────────────────────────────────────────────────────────────────
