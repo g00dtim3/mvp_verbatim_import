@@ -5,10 +5,9 @@ scripts/load_table_co.py
 Compass · Consumer Voice — Import Pipeline
 Import de la table de référence Table_CO.csv dans categories_mapping.
 
-Effets :
-  1. Lit data/Table_CO.csv (encodage UTF-8 BOM, séparateur ; ou ,)
-  2. UPSERT de toutes les lignes valides dans categories_mapping
-  3. Propage les catégories sur TOUS les verbatims existants (brand + product_name)
+API publique :
+    run(dry_run, propagate, reset)   ← appelé depuis pages/99_Admin.py
+    main()                           ← CLI (python scripts/load_table_co.py)
 
 Colonnes attendues dans Table_CO.csv :
   Key brandxpdt          = brand || product_name (concaténé, sans séparateur)
@@ -18,12 +17,9 @@ Colonnes attendues dans Table_CO.csv :
   sous categorie interne
   photo                  = oui / non / true / false
 
-Utilisation :
+Utilisation CLI :
     cd compass_import
     python scripts/load_table_co.py [--dry-run]
-
-Options :
-    --dry-run    Lit et valide le CSV sans écrire en base.
 
 Prérequis :
     - Variables d'environnement configurées (.env)
@@ -56,6 +52,25 @@ _REQUIRED_COLS = {
 _BATCH_SIZE = 500
 
 
+# ── Logger partagé ────────────────────────────────────────────────────────────
+
+def _make_log(use_streamlit: bool):
+    """
+    Retourne une fonction log(msg).
+    Si use_streamlit=True et qu'un contexte Streamlit est actif, utilise
+    st.write() ; sinon print().
+    """
+    if use_streamlit:
+        try:
+            import streamlit as st
+            # Tester qu'un contexte de script est bien actif
+            _ = st.session_state  # lève une exception hors contexte
+            return st.write
+        except Exception:
+            pass
+    return print
+
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def _detect_sep(path: Path) -> str:
@@ -83,7 +98,7 @@ def read_table_co(csv_path: Path) -> tuple[list[tuple], list[str]]:
 
     rows : liste de tuples (key_brandxpdt, brand, product_name,
                             categorie_interne, sous_categorie_interne, photo)
-    warnings : lignes ignorées avec raison.
+    warnings : messages pour les lignes ignorées.
     """
     sep = _detect_sep(csv_path)
     rows: list[tuple] = []
@@ -109,27 +124,20 @@ def read_table_co(csv_path: Path) -> tuple[list[tuple], list[str]]:
             sous_cat     = (row.get("sous categorie interne") or "").strip()
             photo        = _parse_photo(row.get("photo", ""))
 
-            # Vérification cohérence de la clé
-            expected_key = brand + product_name
-            if key and key != expected_key:
-                # Utiliser la clé du fichier comme référence (source de vérité)
-                pass  # on conserve la clé du fichier
-
             if not key:
-                # Reconstituer la clé si absente
                 if brand and product_name:
-                    key = expected_key
+                    key = brand + product_name
                 else:
                     warnings.append(
                         f"Ligne {lineno} ignorée — key_brandxpdt, brand ou "
-                        f"product_name vide : {dict(row)}"
+                        f"product_name vide"
                     )
                     continue
 
             if not cat or not sous_cat:
                 warnings.append(
                     f"Ligne {lineno} ignorée — categorie ou sous_categorie vide "
-                    f"pour '{key}'"
+                    f"pour « {key} »"
                 )
                 continue
 
@@ -138,24 +146,10 @@ def read_table_co(csv_path: Path) -> tuple[list[tuple], list[str]]:
     return rows, warnings
 
 
-# ── Import en base ────────────────────────────────────────────────────────────
+# ── Opérations base ───────────────────────────────────────────────────────────
 
-def load_table_co(conn, rows: list[tuple]) -> dict:
-    """
-    UPSERT les rows dans categories_mapping puis propage sur verbatims.
-
-    Args:
-        conn: Connexion psycopg2 (autocommit=False).
-        rows: Liste de tuples (key_brandxpdt, brand, product_name,
-                               categorie_interne, sous_categorie_interne, photo).
-
-    Returns:
-        dict { "upserted": int, "propagated": int }
-    """
-    if not rows:
-        return {"upserted": 0, "propagated": 0}
-
-    # ── UPSERT categories_mapping ─────────────────────────────────────────────
+def _upsert(conn, rows: list[tuple], log) -> int:
+    """UPSERT par batches dans categories_mapping. Retourne le nombre upserted."""
     upsert_sql = """
         INSERT INTO categories_mapping
             (key_brandxpdt, brand, product_name,
@@ -170,7 +164,6 @@ def load_table_co(conn, rows: list[tuple]) -> dict:
             matched_at             = NOW(),
             matched_by             = 'load_table_co'
     """
-
     upserted = 0
     for start in range(0, len(rows), _BATCH_SIZE):
         chunk = rows[start : start + _BATCH_SIZE]
@@ -179,9 +172,12 @@ def load_table_co(conn, rows: list[tuple]) -> dict:
             execute_values(cur, upsert_sql, values)
         conn.commit()
         upserted += len(chunk)
-        print(f"    {upserted:,} / {len(rows):,} lignes upsertées…")
+        log(f"  {upserted:,} / {len(rows):,} lignes upsertées…")
+    return upserted
 
-    # ── Propagation sur verbatims (toutes lignes, même déjà catégorisées) ────
+
+def _propagate(conn, log) -> int:
+    """Propage categories_mapping → verbatims sur brand + product_name."""
     with conn.cursor() as cur:
         cur.execute("""
             UPDATE verbatims AS v
@@ -192,13 +188,90 @@ def load_table_co(conn, rows: list[tuple]) -> dict:
              WHERE v.brand = cm.brand
                AND v.product_name = cm.product_name
         """)
-        propagated = cur.rowcount
+        n = cur.rowcount
     conn.commit()
+    log(f"  ✓ {n:,} verbatim(s) mis à jour")
+    return n
 
-    return {"upserted": upserted, "propagated": propagated}
+
+# ── API publique ──────────────────────────────────────────────────────────────
+
+def run(
+    dry_run:   bool = True,
+    propagate: bool = False,
+    reset:     bool = False,
+    csv_path:  Path | None = None,
+) -> dict:
+    """
+    Point d'entrée appelable depuis Streamlit (pages/99_Admin.py) ou la CLI.
+
+    Args:
+        dry_run:   Si True, lit et valide le CSV mais n'écrit rien en base.
+        propagate: Si True, propage les catégories vers verbatims après l'UPSERT.
+        reset:     Si True, vide categories_mapping avant l'UPSERT (TRUNCATE).
+        csv_path:  Chemin vers Table_CO.csv. Défaut : data/Table_CO.csv.
+
+    Returns:
+        dict { "rows_read": int, "warnings": int,
+               "upserted": int, "propagated": int }
+
+    Écrit les logs via st.write() si un contexte Streamlit est actif,
+    sinon via print().
+    """
+    log = _make_log(use_streamlit=True)
+    path = Path(csv_path) if csv_path else _CSV_PATH
+
+    # ── 1. Vérification fichier ───────────────────────────────────────────────
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Fichier introuvable : {path}\n"
+            "Placez Table_CO.csv dans compass_import/data/ et relancez."
+        )
+    log(f"✓ Fichier : {path.name}")
+
+    # ── 2. Lecture CSV ────────────────────────────────────────────────────────
+    rows, warnings = read_table_co(path)
+    log(f"✓ {len(rows):,} lignes valides lues ({len(warnings)} ignorée(s))")
+    for w in warnings[:5]:
+        log(f"  ⚠ {w}")
+    if len(warnings) > 5:
+        log(f"  ⚠ … et {len(warnings) - 5} avertissement(s) supplémentaire(s)")
+
+    if dry_run:
+        log("— Dry-run : aucune écriture en base.")
+        return {"rows_read": len(rows), "warnings": len(warnings),
+                "upserted": 0, "propagated": 0}
+
+    if not rows:
+        log("⚠ Aucune ligne valide à importer.")
+        return {"rows_read": 0, "warnings": len(warnings),
+                "upserted": 0, "propagated": 0}
+
+    # ── 3. Écriture en base ───────────────────────────────────────────────────
+    with get_connection() as conn:
+        if reset:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM categories_mapping")
+                deleted = cur.rowcount
+            conn.commit()
+            log(f"✓ Table vidée ({deleted:,} entrée(s) supprimée(s))")
+
+        upserted = _upsert(conn, rows, log)
+        log(f"✓ {upserted:,} entrées upsertées dans categories_mapping")
+
+        n_propagated = 0
+        if propagate:
+            n_propagated = _propagate(conn, log)
+
+    return {
+        "rows_read":  len(rows),
+        "warnings":   len(warnings),
+        "upserted":   upserted,
+        "propagated": n_propagated,
+    }
 
 
-# ── Main ──────────────────────────────────────────────────────────────────────
+# ── CLI ───────────────────────────────────────────────────────────────────────
 
 def main() -> None:
     dry_run = "--dry-run" in sys.argv
@@ -210,62 +283,30 @@ def main() -> None:
         print("  MODE : DRY-RUN (aucune écriture en base)")
     print(f"{'=' * 60}\n")
 
-    # 1. Vérification du fichier CSV
-    print(f"[ 1/3 ] Vérification du fichier {_CSV_PATH.name}…")
-    if not _CSV_PATH.exists():
-        print(f"  ✕ Fichier introuvable : {_CSV_PATH}")
-        print("  Placez Table_CO.csv dans compass_import/data/ et relancez.")
-        sys.exit(1)
-    print(f"  ✓ Fichier trouvé ({_CSV_PATH})")
-
-    # 2. Lecture + validation CSV
-    print("\n[ 2/3 ] Lecture et validation du CSV…")
-    try:
-        rows, warnings = read_table_co(_CSV_PATH)
-    except ValueError as exc:
-        print(f"  ✕ Erreur CSV : {exc}")
-        sys.exit(1)
-    except Exception as exc:
-        print(f"  ✕ Erreur inattendue : {exc}")
-        sys.exit(1)
-
-    print(f"  ✓ {len(rows):,} lignes valides lues")
-    if warnings:
-        print(f"  ⚠ {len(warnings)} ligne(s) ignorée(s) :")
-        for w in warnings[:10]:
-            print(f"      {w}")
-        if len(warnings) > 10:
-            print(f"      … et {len(warnings) - 10} autre(s)")
-
-    if dry_run:
-        print("\n  [DRY-RUN] Aucune écriture effectuée.")
-        print(f"\n{'=' * 60}")
-        print("  Dry-run terminé — relancez sans --dry-run pour importer.")
-        print(f"{'=' * 60}\n")
-        return
-
-    # 3. Test connexion + import
-    print("\n[ 3/3 ] Test de connexion et import…")
-    if not test_connection():
-        print("  ✕ Connexion échouée. Vérifiez .env et la base de données.")
-        sys.exit(1)
-    print("  ✓ Connexion OK")
+    if not dry_run:
+        print("[ 0/1 ] Test de connexion…")
+        if not test_connection():
+            print("  ✕ Connexion échouée. Vérifiez .env et la base de données.")
+            sys.exit(1)
+        print("  ✓ Connexion OK\n")
 
     try:
-        with get_connection() as conn:
-            result = load_table_co(conn, rows)
-    except Exception as exc:
-        print(f"  ✕ Erreur lors de l'import : {exc}")
+        result = run(dry_run=dry_run, propagate=True, reset=False)
+    except FileNotFoundError as exc:
+        print(f"  ✕ {exc}")
         sys.exit(1)
-
-    print(f"\n  ✓ {result['upserted']:,} entrées upsertées dans categories_mapping")
-    print(f"  ✓ {result['propagated']:,} verbatim(s) mis à jour")
+    except Exception as exc:
+        print(f"  ✕ Erreur : {exc}")
+        sys.exit(1)
 
     print(f"\n{'=' * 60}")
-    print("  Import Table_CO terminé.")
-    print(f"  Lancez l'application pour vérifier :")
-    print(f"    cd {_ROOT}")
-    print("    streamlit run app.py")
+    if dry_run:
+        print(f"  Dry-run terminé : {result['rows_read']:,} lignes valides.")
+        print("  Relancez sans --dry-run pour importer.")
+    else:
+        print(f"  Import terminé.")
+        print(f"  Upserted : {result['upserted']:,}")
+        print(f"  Verbatims mis à jour : {result['propagated']:,}")
     print(f"{'=' * 60}\n")
 
 
