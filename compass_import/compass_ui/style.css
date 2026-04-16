@@ -176,6 +176,28 @@ hr {
   border-left: 3px solid var(--c-cyan) !important;
 }
 
+/* Supprimer le double cadre sur les boutons nav sidebar */
+[data-testid="stSidebarNav"] .stButton > button,
+[data-testid="stSidebarNav"] .stButton > button:focus,
+[data-testid="stSidebarNav"] .stButton > button:active {
+  border: none !important;
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+/* Supprimer l'outline focus global qui crée le double cadre */
+.stButton > button:focus:not(:focus-visible) {
+  outline: none !important;
+  box-shadow: none !important;
+}
+
+/* Focus visible uniquement au clavier — accessibilité */
+.stButton > button:focus-visible {
+  outline: 2px solid var(--c-blue) !important;
+  outline-offset: 2px !important;
+  box-shadow: none !important;
+}
+
 /* ═══════════════════════════════════════════════════════════
    BOUTONS
 ═══════════════════════════════════════════════════════════ */
@@ -329,31 +351,41 @@ hr {
 /* Cibler uniquement [data-baseweb="popover"] pour ne pas
    toucher aux autres composants BaseWeb de Streamlit        */
 
-[data-baseweb="popover"] {
+/* Remplacer le bloc [data-baseweb="popover"] existant par celui-ci */
+
+/* Portal-level — Streamlit monte les popover au niveau du body */
+body > div[data-baseweb="layer"],
+body > div[data-baseweb="layer"] [data-baseweb="popover"],
+body > div[data-baseweb="layer"] [data-baseweb="menu"],
+[data-baseweb="popover"],
+[data-baseweb="popover"] > div {
   background: #FFFFFF !important;
-  border: 1px solid var(--c-border) !important;
-  border-radius: var(--r-md) !important;
-  box-shadow: var(--shadow-md) !important;
+  color: #1A2B3C !important;
   color-scheme: light !important;
 }
 
+body > div[data-baseweb="layer"] ul,
+body > div[data-baseweb="layer"] [role="listbox"],
 [data-baseweb="popover"] ul,
 [data-baseweb="popover"] [role="listbox"] {
   background: #FFFFFF !important;
   padding: 4px !important;
 }
 
+body > div[data-baseweb="layer"] li,
+body > div[data-baseweb="layer"] [role="option"],
 [data-baseweb="popover"] li,
 [data-baseweb="popover"] [role="option"] {
   background: #FFFFFF !important;
   color: #1A2B3C !important;
   font-size: 13px !important;
   font-family: 'Inter', sans-serif !important;
-  border-radius: var(--r-sm) !important;
+  border-radius: 6px !important;
   padding: 8px 12px !important;
-  cursor: pointer !important;
 }
 
+body > div[data-baseweb="layer"] li:hover,
+body > div[data-baseweb="layer"] [role="option"]:hover,
 [data-baseweb="popover"] li:hover,
 [data-baseweb="popover"] [role="option"]:hover {
   background: #EEF2F7 !important;
@@ -361,21 +393,21 @@ hr {
 }
 
 /* Option actuellement sélectionnée (était rouge/rouge foncé) */
-[data-baseweb="popover"] li[aria-selected="true"],
-[data-baseweb="popover"] [role="option"][aria-selected="true"] {
+body > div[data-baseweb="layer"] [aria-selected="true"],
+[data-baseweb="popover"] [aria-selected="true"] {
   background: #EFF6FF !important;
   color: #1D4ED8 !important;
   font-weight: 500 !important;
 }
 
 /* Champ de recherche dans le popover */
+body > div[data-baseweb="layer"] input,
 [data-baseweb="popover"] input {
   background: #FFFFFF !important;
   color: #1A2B3C !important;
-  border: 1px solid var(--c-border) !important;
-  border-radius: var(--r-sm) !important;
+  border: 1px solid #C8D6E5 !important;
+  border-radius: 6px !important;
   font-size: 13px !important;
-  font-family: 'Inter', sans-serif !important;
 }
 
 /* ═══════════════════════════════════════════════════════════
