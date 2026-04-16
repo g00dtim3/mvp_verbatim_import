@@ -21,7 +21,7 @@ import openpyxl
 from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill, Protection
 from openpyxl.utils import get_column_letter
-from openpyxl.workbook.defined_names import DefinedName
+from openpyxl.workbook.defined_name import DefinedName
 from openpyxl.worksheet.datavalidation import DataValidation
 from psycopg2.extras import execute_values
 
