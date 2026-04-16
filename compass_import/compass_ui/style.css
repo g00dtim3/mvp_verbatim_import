@@ -771,3 +771,93 @@ hr {
   color: var(--c-text-3);
   white-space: nowrap;
 }
+
+
+/* ═══════════════════════════════════════════════════════════
+   DATA EDITOR — overrides spécifiques
+═══════════════════════════════════════════════════════════ */
+
+/* Cellules du tableau */
+[data-testid="stDataFrameResizable"] {
+  background: var(--c-surface) !important;
+}
+
+/* Fond et texte des cellules */
+[data-testid="stDataFrameResizable"] .dvn-scroller,
+[data-testid="stDataFrameResizable"] canvas {
+  background: var(--c-surface) !important;
+}
+
+/* ── Dropdown / select dans data_editor ───────────────────── */
+
+/* Conteneur du menu déroulant */
+[data-baseweb="popover"],
+[data-baseweb="menu"],
+[data-baseweb="select"] {
+  background: var(--c-surface) !important;
+  border: 1px solid var(--c-border) !important;
+  border-radius: var(--r-md) !important;
+  box-shadow: var(--shadow-md) !important;
+}
+
+/* Liste d'options */
+[data-baseweb="menu"] ul,
+[data-baseweb="select"] ul {
+  background: var(--c-surface) !important;
+  padding: 4px !important;
+}
+
+/* Chaque option */
+[data-baseweb="menu"] li,
+[data-baseweb="option"] {
+  background: var(--c-surface) !important;
+  color: var(--c-text) !important;
+  font-size: 13px !important;
+  border-radius: var(--r-sm) !important;
+  padding: 8px 12px !important;
+}
+
+/* Option au survol */
+[data-baseweb="menu"] li:hover,
+[data-baseweb="option"]:hover {
+  background: var(--c-surface-2) !important;
+  color: var(--c-blue) !important;
+}
+
+/* Option sélectionnée (surlignée en rouge dans ta capture) */
+[data-baseweb="menu"] li[aria-selected="true"],
+[data-baseweb="option"][aria-selected="true"] {
+  background: var(--c-info-bg) !important;
+  color: var(--c-blue) !important;
+  font-weight: 500 !important;
+}
+
+/* Texte de recherche dans le dropdown */
+[data-baseweb="select"] input {
+  color: var(--c-text) !important;
+  background: transparent !important;
+}
+
+/* ── Texte dans les cellules data_editor ──────────────────── */
+
+/* Texte sombre sur fond sombre — le vrai problème */
+.glideDataEditor .gdg-cell-content,
+.glideDataEditor span,
+.glideDataEditor div {
+  color: var(--c-text) !important;
+}
+
+/* Header du tableau */
+.glideDataEditor .gdg-header {
+  background: var(--c-surface-2) !important;
+  color: var(--c-text-2) !important;
+  font-weight: 600 !important;
+}
+
+/* Cellule active / en édition */
+.glideDataEditor .gdg-cell-content.active,
+.glideDataEditor input {
+  background: var(--c-surface) !important;
+  color: var(--c-text) !important;
+  border-color: var(--c-blue) !important;
+}
