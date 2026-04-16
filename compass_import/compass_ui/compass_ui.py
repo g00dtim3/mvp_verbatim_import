@@ -50,6 +50,9 @@ def inject_css():
 
     # Restauration du thème depuis localStorage via une iframe height=0.
     # window.parent.document cible le document Streamlit parent.
+    # height="content" → hauteur déterminée par le contenu rendu ;
+    # un <script> seul ne produit aucun contenu visuel, donc l'iframe
+    # n'occupe pas d'espace tout en exécutant le script.
     st.iframe(
         """
         <script>
@@ -59,7 +62,7 @@ def inject_css():
         })();
         </script>
         """,
-        height=0,
+        height="content",
     )
 
 
