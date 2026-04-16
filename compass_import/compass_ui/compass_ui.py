@@ -12,6 +12,7 @@ Usage :
 """
 
 import streamlit as st
+import streamlit.components.v1 as components
 from pathlib import Path
 from datetime import datetime
 from typing import Literal, Optional
@@ -20,22 +21,32 @@ from typing import Literal, Optional
 # ─── CSS injection ─────────────────────────────────────────────────────────────
 
 def inject_css():
-    """Injecte le design system Compass dans la page Streamlit."""
+    """Injecte le design system Compass dans la page Streamlit.
+
+    Note : Streamlit bloque les balises <script> dans st.markdown().
+    Le JavaScript de restauration du thème est injecté via
+    components.html() (iframe height=0) pour contourner cette limite.
+    """
     css_path = Path(__file__).parent / "style.css"
     with open(css_path) as f:
         css = f.read()
 
-    # Wrapper pour appliquer data-theme au body Streamlit
-    st.markdown(f"""
-    <style>
-    {css}
-    </style>
-    <script>
-    // Apply stored theme on load
-    const theme = localStorage.getItem('compass_theme') || 'light';
-    document.documentElement.setAttribute('data-theme', theme);
-    </script>
-    """, unsafe_allow_html=True)
+    # Injection CSS uniquement (les <script> sont stripés par Streamlit)
+    st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
+
+    # Restauration du thème depuis localStorage via une iframe height=0.
+    # window.parent.document cible le document Streamlit parent.
+    components.html(
+        """
+        <script>
+        (function () {
+            var theme = localStorage.getItem('compass_theme') || 'light';
+            window.parent.document.documentElement.setAttribute('data-theme', theme);
+        })();
+        </script>
+        """,
+        height=0,
+    )
 
 
 def theme_toggle():
