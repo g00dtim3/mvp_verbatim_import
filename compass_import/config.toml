@@ -1,0 +1,96 @@
+# ═══════════════════════════════════════════════════════════════
+# Compass · Consumer Voice — Import Pipeline
+# Configuration dev / prod
+#
+# Sélection de l'environnement :
+#   export COMPASS_ENV=dev    → Supabase
+#   export COMPASS_ENV=prod   → PostgreSQL
+#
+# Les credentials sensibles sont dans .env (jamais commités)
+# ═══════════════════════════════════════════════════════════════
+
+[app]
+name    = "Compass · Consumer Voice Import"
+version = "1.0.0"
+debug   = false
+
+# ── Base de données ────────────────────────────────────────────
+
+[database.dev]
+# Supabase — connexion via postgres://
+# Les valeurs réelles sont dans .env : SUPABASE_DB_URL
+driver  = "psycopg2"
+# url   = chargé depuis env var SUPABASE_DB_URL
+pool_size    = 3
+pool_timeout = 10
+schema       = "public"
+
+[database.prod]
+# PostgreSQL standard
+# Les valeurs réelles sont dans .env :
+#   PG_HOST, PG_PORT, PG_DB, PG_USER, PG_PASSWORD
+driver  = "psycopg2"
+port    = 5432
+pool_size    = 5
+pool_timeout = 30
+schema       = "public"
+
+# ── Import ─────────────────────────────────────────────────────
+
+[import]
+batch_size          = 1000      # Lignes par transaction INSERT
+max_file_size_mb    = 200       # Limite upload fichier CSV
+csv_separator       = ";"       # Séparateur CSV source API
+csv_encoding        = "utf-8-sig"  # UTF-8 avec BOM
+
+# Colonnes obligatoires dans le CSV source
+required_columns = [
+  "guid",
+  "brand",
+  "country",
+  "date",
+  "opinion",
+  "product_name_SEMANTIWEB",
+  "rating",
+  "source",
+  "verbatim_content",
+  "sampling"
+]
+
+# Colonnes attributs (valeur "0" → NULL)
+attribute_columns = [
+  "attribute_Efficiency",
+  "attribute_Packaging",
+  "attribute_Price",
+  "attribute_Quality",
+  "attribute_Scent",
+  "attribute_Taste",
+  "attribute_Texture",
+  "attribute_Safety",
+  "attribute_Composition"
+]
+
+# ── Référentiel catégories ─────────────────────────────────────
+
+[referentiel]
+path = "data/referentiel_categories.csv"
+# CSV avec colonnes : categorie, sous_categorie
+# Rechargeable sans redémarrer via bouton dans l'UI
+
+# ── XLS Matching ──────────────────────────────────────────────
+
+[matching]
+# Style colonnes éditables dans le XLS
+editable_fill_color   = "FFFBEB"   # Fond jaune pâle
+header_fill_color     = "1F6ED4"   # Bleu Compass
+header_font_color     = "FFFFFF"   # Texte blanc
+locked_fill_color     = "F3F4F6"   # Fond gris (colonnes verrouillées)
+
+# ── UI ────────────────────────────────────────────────────────
+
+[ui]
+page_title    = "Compass · Consumer Voice Import"
+page_icon     = "📊"
+layout        = "wide"
+sidebar_state = "expanded"
+rows_per_page = 50   # Pagination enrichissement

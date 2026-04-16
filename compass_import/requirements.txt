@@ -1,0 +1,23 @@
+# Compass · Consumer Voice — Import Pipeline
+# Python >= 3.11
+
+# ── Interface ─────────────────────────────────────────────────
+streamlit>=1.35.0
+
+# ── Base de données ───────────────────────────────────────────
+psycopg2-binary>=2.9.9
+
+# ── Data manipulation ─────────────────────────────────────────
+pandas>=2.2.0
+openpyxl>=3.1.2          # Génération XLS matching avec menus déroulants
+
+# ── Configuration ─────────────────────────────────────────────
+python-dotenv>=1.0.0
+tomli>=2.0.1              # Lecture config.toml (Python < 3.11)
+
+# ── Tests ─────────────────────────────────────────────────────
+pytest>=8.0.0
+pytest-cov>=4.1.0
+
+# ── Utilitaires ───────────────────────────────────────────────
+python-dateutil>=2.9.0    # Parsing dates flexibles
