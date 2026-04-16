@@ -192,10 +192,10 @@ if uploaded_xls is not None:
 
     # ── Validation ────────────────────────────────────────────────────────────
     if st.session_state.match_validation is None:
-        original_names = {p["product_name"] for p in unmatched_products}
+        original_keys = {p["brand"] + p["product_name"] for p in unmatched_products}
         try:
             validation = validate_matching_xls(
-                xls_bytes_uploaded, referentiel, original_names
+                xls_bytes_uploaded, referentiel, original_keys
             )
             st.session_state.match_validation = validation
         except ValueError as exc:
@@ -234,7 +234,7 @@ if uploaded_xls is not None:
             f"⚠ {n_errors} ligne(s) rejetée(s) — voir le détail", expanded=True
         ):
             df_errors = pd.DataFrame(validation["errors"])[
-                ["ligne", "product_name", "colonne", "valeur", "raison"]
+                ["ligne", "key_brandxpdt", "colonne", "valeur", "raison"]
             ]
             st.dataframe(df_errors, use_container_width=True, hide_index=True)
 

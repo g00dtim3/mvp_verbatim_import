@@ -381,11 +381,11 @@ def apply_known_categories(conn, rows: list[dict]) -> list[dict]:
     Enrichit les verbatims avec les catégories déjà présentes dans
     ``categories_mapping``.
 
-    Une seule requête SQL interroge tous les ``product_name`` distincts en une
-    fois (``ANY(%s)``). Pour chaque produit connu, ``categorie_interne``,
-    ``sous_categorie_interne`` et ``photo`` sont peuplés **uniquement si
-    ``categorie_interne`` est encore** ``None`` (ne pas écraser un import
-    initial qui aurait déjà ses catégories).
+    Lookup par ``key_brandxpdt`` (= brand || product_name) — une seule requête
+    pour tous les couples distincts du batch.  Pour chaque produit connu,
+    ``categorie_interne``, ``sous_categorie_interne`` et ``photo`` sont peuplés
+    **uniquement si ``categorie_interne`` est encore** ``None`` (ne pas écraser
+    un import initial qui aurait déjà ses catégories).
 
     Args:
         conn: Connexion psycopg2 active.
@@ -397,22 +397,26 @@ def apply_known_categories(conn, rows: list[dict]) -> list[dict]:
     if not rows:
         return rows
 
-    product_names = list({r["product_name"] for r in rows if r.get("product_name")})
-    if not product_names:
+    keys = list({
+        r["brand"] + r["product_name"]
+        for r in rows
+        if r.get("brand") and r.get("product_name")
+    })
+    if not keys:
         return rows
 
     query = """
-        SELECT product_name, categorie_interne, sous_categorie_interne, photo
+        SELECT brand, product_name, categorie_interne, sous_categorie_interne, photo
         FROM categories_mapping
-        WHERE product_name = ANY(%s)
+        WHERE key_brandxpdt = ANY(%s)
     """
     with conn.cursor() as cur:
-        cur.execute(query, (product_names,))
-        mapping: dict[str, dict] = {
-            db_row[0]: {
-                "categorie_interne":      db_row[1],
-                "sous_categorie_interne": db_row[2],
-                "photo":                  db_row[3],
+        cur.execute(query, (keys,))
+        mapping: dict[tuple, dict] = {
+            (db_row[0], db_row[1]): {
+                "categorie_interne":      db_row[2],
+                "sous_categorie_interne": db_row[3],
+                "photo":                  db_row[4],
             }
             for db_row in cur.fetchall()
         }
@@ -422,7 +426,7 @@ def apply_known_categories(conn, rows: list[dict]) -> list[dict]:
 
     enriched = []
     for row in rows:
-        known = mapping.get(row.get("product_name", ""))
+        known = mapping.get((row.get("brand", ""), row.get("product_name", "")))
         if known is not None and row.get("categorie_interne") is None:
             row = {**row, **known}
         enriched.append(row)

@@ -70,8 +70,8 @@ def _sanitize_excel_name(name: str) -> str:
 
 def get_unmatched_products(conn) -> list[dict]:
     """
-    Retourne les produits présents dans ``verbatims`` mais dont
-    ``categorie_interne`` est toujours NULL.
+    Retourne les produits présents dans ``verbatims`` mais absents de
+    ``categories_mapping`` (jointure sur brand + product_name).
 
     Trie par nombre de verbatims décroissant pour aider l'opérateur à
     prioriser les produits les plus impactants.
@@ -80,14 +80,16 @@ def get_unmatched_products(conn) -> list[dict]:
         conn: Connexion psycopg2 active.
 
     Returns:
-        Liste de dicts avec clés ``product_name`` et ``nb_verbatims``.
+        Liste de dicts avec clés ``brand``, ``product_name``, ``nb_verbatims``.
     """
     query = """
-        SELECT product_name, COUNT(*) AS nb_verbatims
-        FROM verbatims
-        WHERE categorie_interne IS NULL
-        GROUP BY product_name
-        ORDER BY nb_verbatims DESC
+        SELECT v.brand, v.product_name, COUNT(*) AS nb_verbatims
+          FROM verbatims v
+          LEFT JOIN categories_mapping cm
+                 ON v.brand = cm.brand AND v.product_name = cm.product_name
+         WHERE cm.key_brandxpdt IS NULL
+         GROUP BY v.brand, v.product_name
+         ORDER BY nb_verbatims DESC
     """
     with conn.cursor() as cur:
         cur.execute(query)
@@ -200,12 +202,15 @@ def export_matching_xls(products: list[dict], referentiel: dict) -> bytes:
     align_left     = Alignment(horizontal="left",   vertical="center", wrap_text=False)
 
     # ── Headers ───────────────────────────────────────────────────────────────
+    # Colonnes A-D verrouillées, colonnes E-G éditables
     _COLS = [
-        ("product_name",          False),  # A — locked
-        ("nb_verbatims",          False),  # B — locked
-        ("categorie_interne",     True),   # C — editable
-        ("sous_categorie_interne",True),   # D — editable
-        ("photo",                 True),   # E — editable
+        ("key_brandxpdt",         False),  # A — locked  (brand || product_name)
+        ("brand",                 False),  # B — locked
+        ("product_name",          False),  # C — locked
+        ("nb_verbatims",          False),  # D — locked
+        ("categorie_interne",     True),   # E — editable
+        ("sous_categorie_interne",True),   # F — editable
+        ("photo",                 True),   # G — editable
     ]
     for col_idx, (label, _editable) in enumerate(_COLS, start=1):
         cell = ws_match.cell(row=1, column=col_idx, value=label)
@@ -217,32 +222,45 @@ def export_matching_xls(products: list[dict], referentiel: dict) -> bytes:
     # ── Data rows ─────────────────────────────────────────────────────────────
     n_rows = len(products)
     for row_idx, product in enumerate(products, start=2):
-        # A — product_name (locked)
-        c = ws_match.cell(row=row_idx, column=1, value=product.get("product_name", ""))
+        brand_val = product.get("brand", "")
+        pname_val = product.get("product_name", "")
+
+        # A — key_brandxpdt (locked)
+        c = ws_match.cell(row=row_idx, column=1, value=brand_val + pname_val)
         c.fill = lck_bg; c.alignment = align_left; c.protection = Protection(locked=True)
 
-        # B — nb_verbatims (locked)
-        c = ws_match.cell(row=row_idx, column=2, value=product.get("nb_verbatims", 0))
+        # B — brand (locked)
+        c = ws_match.cell(row=row_idx, column=2, value=brand_val)
+        c.fill = lck_bg; c.alignment = align_left; c.protection = Protection(locked=True)
+
+        # C — product_name (locked)
+        c = ws_match.cell(row=row_idx, column=3, value=pname_val)
+        c.fill = lck_bg; c.alignment = align_left; c.protection = Protection(locked=True)
+
+        # D — nb_verbatims (locked)
+        c = ws_match.cell(row=row_idx, column=4, value=product.get("nb_verbatims", 0))
         c.fill = lck_bg; c.alignment = align_center; c.protection = Protection(locked=True)
 
-        # C — categorie_interne (editable)
-        c = ws_match.cell(row=row_idx, column=3)
-        c.fill = edt_bg; c.alignment = align_center; c.protection = Protection(locked=False)
-
-        # D — sous_categorie_interne (editable)
-        c = ws_match.cell(row=row_idx, column=4)
-        c.fill = edt_bg; c.alignment = align_center; c.protection = Protection(locked=False)
-
-        # E — photo (editable)
+        # E — categorie_interne (editable)
         c = ws_match.cell(row=row_idx, column=5)
         c.fill = edt_bg; c.alignment = align_center; c.protection = Protection(locked=False)
 
+        # F — sous_categorie_interne (editable)
+        c = ws_match.cell(row=row_idx, column=6)
+        c.fill = edt_bg; c.alignment = align_center; c.protection = Protection(locked=False)
+
+        # G — photo (editable)
+        c = ws_match.cell(row=row_idx, column=7)
+        c.fill = edt_bg; c.alignment = align_center; c.protection = Protection(locked=False)
+
     # ── Column widths ─────────────────────────────────────────────────────────
-    ws_match.column_dimensions["A"].width = 45
-    ws_match.column_dimensions["B"].width = 14
-    ws_match.column_dimensions["C"].width = 26
-    ws_match.column_dimensions["D"].width = 38
-    ws_match.column_dimensions["E"].width = 10
+    ws_match.column_dimensions["A"].width = 50   # key_brandxpdt
+    ws_match.column_dimensions["B"].width = 22   # brand
+    ws_match.column_dimensions["C"].width = 42   # product_name
+    ws_match.column_dimensions["D"].width = 14   # nb_verbatims
+    ws_match.column_dimensions["E"].width = 26   # categorie_interne
+    ws_match.column_dimensions["F"].width = 38   # sous_categorie_interne
+    ws_match.column_dimensions["G"].width = 10   # photo
 
     # ── Data validations (only if there are rows) ─────────────────────────────
     if n_rows > 0:
@@ -258,19 +276,19 @@ def export_matching_xls(products: list[dict], referentiel: dict) -> bytes:
             error="Choisissez une catégorie dans la liste.",
             errorStyle="stop",
         )
-        cat_dv.add(f"C2:C{last_row}")
+        cat_dv.add(f"E2:E{last_row}")
         ws_match.add_data_validation(cat_dv)
 
         # Sous-catégorie — dropdown dépendant via INDIRECT + named ranges
-        # La formule INDIRECT(SUBSTITUTE(C2," ","_")) référence le named range
-        # correspondant à la catégorie sélectionnée en colonne C.
+        # La formule INDIRECT(SUBSTITUTE(E2," ","_")) référence le named range
+        # correspondant à la catégorie sélectionnée en colonne E.
         sous_dv = DataValidation(
             type="list",
-            formula1='INDIRECT(SUBSTITUTE(C2," ","_"))',
+            formula1='INDIRECT(SUBSTITUTE(E2," ","_"))',
             allow_blank=True,
             showDropDown=False,
         )
-        sous_dv.add(f"D2:D{last_row}")
+        sous_dv.add(f"F2:F{last_row}")
         ws_match.add_data_validation(sous_dv)
 
         # Photo — dropdown true / false
@@ -283,7 +301,7 @@ def export_matching_xls(products: list[dict], referentiel: dict) -> bytes:
             error="Choisissez 'true' ou 'false'.",
             errorStyle="stop",
         )
-        photo_dv.add(f"E2:E{last_row}")
+        photo_dv.add(f"G2:G{last_row}")
         ws_match.add_data_validation(photo_dv)
 
     # ── Sheet protection — seules C-E sont déverrouillées ────────────────────
@@ -303,14 +321,18 @@ def export_matching_xls(products: list[dict], referentiel: dict) -> bytes:
 def validate_matching_xls(
     file_bytes: bytes,
     referentiel: dict,
-    original_product_names: set[str] | None = None,
+    original_keys: set[str] | None = None,
 ) -> dict:
     """
     Valide le fichier XLS de matching complété par l'opérateur.
 
-    Contrôles effectués ligne par ligne :
-    - ``product_name`` vide → rejet.
-    - ``product_name`` modifié (si ``original_product_names`` fourni) → rejet.
+    Structure attendue (v1.3) :
+      A=key_brandxpdt  B=brand  C=product_name  D=nb_verbatims (locked)
+      E=categorie_interne  F=sous_categorie_interne  G=photo (editable)
+
+    Contrôles ligne par ligne :
+    - ``key_brandxpdt`` vide → rejet.
+    - ``key_brandxpdt`` modifié (si ``original_keys`` fourni) → rejet.
     - ``categorie_interne`` vide → rejet.
     - ``sous_categorie_interne`` vide → rejet.
     - ``photo`` ni "true" ni "false" → rejet.
@@ -319,13 +341,16 @@ def validate_matching_xls(
     Args:
         file_bytes: Contenu binaire du fichier .xlsx.
         referentiel: Dict ``{categorie: [sous_categories]}`` — référentiel fermé.
-        original_product_names: Ensemble des ``product_name`` attendus (optionnel).
-                                 Si fourni, détecte les modifications de product_name.
+        original_keys: Ensemble des ``key_brandxpdt`` attendus (optionnel).
+                       Si fourni, détecte les clés inconnues ou modifiées.
 
     Returns:
         Dict ``{"valid": list[dict], "errors": list[dict]}``.
-        Chaque entrée d'erreur contient : ``ligne``, ``product_name``,
+        Chaque entrée d'erreur contient : ``ligne``, ``key_brandxpdt``,
         ``colonne``, ``valeur``, ``raison``.
+        Chaque entrée valide contient : ``key_brandxpdt``, ``brand``,
+        ``product_name``, ``categorie_interne``, ``sous_categorie_interne``,
+        ``photo`` (bool).
 
     Raises:
         ValueError: Si le fichier est illisible ou ne contient pas l'onglet
@@ -346,19 +371,18 @@ def validate_matching_xls(
     valid_rows:  list[dict] = []
     error_rows:  list[dict] = []
 
-    def _err(row_idx, product_name, colonne, valeur, raison):
+    def _err(row_idx, key, colonne, valeur, raison):
         error_rows.append({
-            "ligne":        row_idx,
-            "product_name": product_name,
-            "colonne":      colonne,
-            "valeur":       str(valeur),
-            "raison":       raison,
+            "ligne":          row_idx,
+            "key_brandxpdt":  key,
+            "colonne":        colonne,
+            "valeur":         str(valeur),
+            "raison":         raison,
         })
 
     def _cell_str(val) -> str:
         if val is None:
             return ""
-        # openpyxl peut retourner True/False pour les cases booléennes Excel
         if isinstance(val, bool):
             return "true" if val else "false"
         return str(val).strip()
@@ -368,22 +392,25 @@ def validate_matching_xls(
         if not any(cell is not None and str(cell).strip() for cell in row):
             continue
 
-        product_name   = _cell_str(row[0] if len(row) > 0 else None)
-        categorie      = _cell_str(row[2] if len(row) > 2 else None)
-        sous_categorie = _cell_str(row[3] if len(row) > 3 else None)
-        photo_raw      = _cell_str(row[4] if len(row) > 4 else None).lower()
+        # A=0  B=1  C=2  D=3  E=4  F=5  G=6
+        key_val        = _cell_str(row[0] if len(row) > 0 else None)
+        brand_val      = _cell_str(row[1] if len(row) > 1 else None)
+        product_val    = _cell_str(row[2] if len(row) > 2 else None)
+        categorie      = _cell_str(row[4] if len(row) > 4 else None)
+        sous_categorie = _cell_str(row[5] if len(row) > 5 else None)
+        photo_raw      = _cell_str(row[6] if len(row) > 6 else None).lower()
 
-        row_errors: list[dict] = []
+        row_errors: list[tuple] = []
 
-        # product_name vide
-        if not product_name:
-            _err(row_idx, "", "product_name", "", "product_name vide — ligne ignorée")
+        # key_brandxpdt vide
+        if not key_val:
+            _err(row_idx, "", "key_brandxpdt", "", "key_brandxpdt vide — ligne ignorée")
             continue
 
-        # product_name modifié
-        if original_product_names is not None and product_name not in original_product_names:
-            row_errors.append(("product_name", product_name,
-                               f"product_name inconnu ou modifié : '{product_name}'"))
+        # key_brandxpdt modifié / inconnu
+        if original_keys is not None and key_val not in original_keys:
+            row_errors.append(("key_brandxpdt", key_val,
+                               f"Clé inconnue ou modifiée : '{key_val}'"))
 
         # catégorie vide
         if not categorie:
@@ -409,10 +436,12 @@ def validate_matching_xls(
 
         if row_errors:
             for colonne, valeur, raison in row_errors:
-                _err(row_idx, product_name, colonne, valeur, raison)
+                _err(row_idx, key_val, colonne, valeur, raison)
         else:
             valid_rows.append({
-                "product_name":          product_name,
+                "key_brandxpdt":         key_val,
+                "brand":                 brand_val,
+                "product_name":          product_val,
                 "categorie_interne":     categorie,
                 "sous_categorie_interne": sous_categorie,
                 "photo":                 photo_raw == "true",
@@ -448,9 +477,10 @@ def apply_matching(conn, valid_rows: list[dict]) -> dict:
     # ── UPSERT categories_mapping ──────────────────────────────────────────────
     upsert_sql = """
         INSERT INTO categories_mapping
-            (product_name, categorie_interne, sous_categorie_interne, photo)
+            (key_brandxpdt, brand, product_name,
+             categorie_interne, sous_categorie_interne, photo)
         VALUES %s
-        ON CONFLICT (product_name) DO UPDATE SET
+        ON CONFLICT (key_brandxpdt) DO UPDATE SET
             categorie_interne      = EXCLUDED.categorie_interne,
             sous_categorie_interne = EXCLUDED.sous_categorie_interne,
             photo                  = EXCLUDED.photo,
@@ -458,6 +488,8 @@ def apply_matching(conn, valid_rows: list[dict]) -> dict:
     """
     upsert_values = [
         (
+            row["key_brandxpdt"],
+            row["brand"],
             row["product_name"],
             row["categorie_interne"],
             row["sous_categorie_interne"],
@@ -470,23 +502,24 @@ def apply_matching(conn, valid_rows: list[dict]) -> dict:
     logger.info("categories_mapping : %d produits upsertés", len(valid_rows))
 
     # ── UPDATE verbatims en cascade ────────────────────────────────────────────
-    # Une seule requête SQL via un JOIN VALUES pour de meilleures performances
-    # sur 500k verbatims.
+    # Jointure sur (brand, product_name) pour propager sur tous les verbatims
+    # du produit, quelle que soit la date d'import.
     update_sql = """
         UPDATE verbatims AS v SET
             categorie_interne      = m.categorie::varchar,
             sous_categorie_interne = m.sous_cat::varchar,
             photo                  = m.photo::boolean
-        FROM (VALUES %s) AS m(product_name text, categorie text,
-                               sous_cat text, photo text)
-        WHERE v.product_name = m.product_name
+        FROM (VALUES %s) AS m(brand text, product_name text,
+                               categorie text, sous_cat text, photo text)
+        WHERE v.brand = m.brand AND v.product_name = m.product_name
     """
     update_values = [
         (
+            row["brand"],
             row["product_name"],
             row["categorie_interne"],
             row["sous_categorie_interne"],
-            str(row["photo"]).lower(),  # cast bool → "true"/"false" string pour le VALUES
+            str(row["photo"]).lower(),
         )
         for row in valid_rows
     ]
