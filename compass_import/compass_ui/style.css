@@ -26,9 +26,9 @@
   --c-border-2:   #C0CCd8;
 
   /* Text */
-  --c-text:       #0E3A5D;
-  --c-text-2:     #6B7280;
-  --c-text-3:     #9CA3AF;
+  --c-text:   #1A2B3C;   /* quasi-noir bleuté — lisible, reste dans l'univers Compass */
+  --c-text-2: #4B5563;   /* gris foncé — contraste 7:1 sur blanc, confortable */
+  --c-text-3: #6B7280;   /* gris moyen — pour les labels et métadonnées */
 
   /* Status */
   --c-success:    #22C55E;
@@ -72,9 +72,9 @@
   --c-border:     #1E3554;
   --c-border-2:   #2A4468;
 
-  --c-text:       #E2EAF4;
-  --c-text-2:     #94A3B8;
-  --c-text-3:     #64748B;
+  --c-text:   #E8EDF2;   /* blanc cassé légèrement bleuté */
+  --c-text-2: #A0AEBB;   /* gris clair lisible */
+  --c-text-3: #6B7A8D;   /* gris moyen pour les secondaires */
 
   --c-success:    #34D399;
   --c-success-bg: #064E3B;
