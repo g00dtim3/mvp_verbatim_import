@@ -204,21 +204,23 @@ def seed_verbatims(conn, csv_path: Path) -> None:
 def seed_categories(conn) -> None:
     """Insère 3 entrées de test dans categories_mapping."""
     entries = [
-        ("Bioderma Sensibio H2O",    "Face Care", "Face Care : Cleanser",    False),
-        ("La Roche-Posay Toleriane", "Face Care", "Face Care : Moisturizer", True),
-        ("Uriage Eau Thermale Crème","Body Care", "Body Care : Body Moisturizer", False),
+        ("Bioderma",      "Bioderma Sensibio H2O",     "Face Care", "Face Care : Cleanser",        False),
+        ("La Roche-Posay","La Roche-Posay Toleriane",  "Face Care", "Face Care : Moisturizer",      True),
+        ("Uriage",        "Uriage Eau Thermale Crème", "Body Care", "Body Care : Body Moisturizer", False),
     ]
     with conn.cursor() as cur:
-        for product_name, cat, sous_cat, photo in entries:
+        for brand, product_name, cat, sous_cat, photo in entries:
+            key = brand + product_name
             cur.execute(
                 """
                 INSERT INTO categories_mapping
-                    (product_name, categorie_interne, sous_categorie_interne,
+                    (key_brandxpdt, brand, product_name,
+                     categorie_interne, sous_categorie_interne,
                      photo, matched_by)
-                VALUES (%s, %s, %s, %s, %s)
-                ON CONFLICT (product_name) DO NOTHING
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (key_brandxpdt) DO NOTHING
                 """,
-                (product_name, cat, sous_cat, photo, "seed_dev"),
+                (key, brand, product_name, cat, sous_cat, photo, "seed_dev"),
             )
     conn.commit()
     print("  ✓ categories_mapping : 3 entrées insérées (ON CONFLICT DO NOTHING)")
@@ -262,7 +264,8 @@ def propagate_categories(conn) -> None:
                    sous_categorie_interne = cm.sous_categorie_interne,
                    photo                  = cm.photo
               FROM categories_mapping cm
-             WHERE v.product_name = cm.product_name
+             WHERE v.brand = cm.brand
+               AND v.product_name = cm.product_name
                AND v.categorie_interne IS NULL
         """)
         updated = cur.rowcount

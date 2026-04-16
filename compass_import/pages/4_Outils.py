@@ -100,14 +100,16 @@ with tab1:
             with get_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute("""
-                        SELECT product_name, categorie_interne, sous_categorie_interne,
+                        SELECT key_brandxpdt, brand, product_name,
+                               categorie_interne, sous_categorie_interne,
                                photo, matched_at
                           FROM categories_mapping
                          ORDER BY matched_at DESC NULLS LAST
                     """)
                     rows = cur.fetchall()
             st.session_state.t1_data = pd.DataFrame(rows, columns=[
-                "product_name", "categorie_interne", "sous_categorie_interne",
+                "key_brandxpdt", "brand", "product_name",
+                "categorie_interne", "sous_categorie_interne",
                 "photo", "matched_at",
             ])
         except Exception as exc:
@@ -124,13 +126,18 @@ with tab1:
         )
     else:
         # ── Filtres ───────────────────────────────────────────────────────────
-        col_s, col_c = st.columns([3, 2])
+        col_s, col_b, col_c = st.columns([3, 2, 2])
         with col_s:
             search = st.text_input(
                 "Recherche produit",
                 placeholder="Filtrer par nom de produit…",
                 key="t1_search",
             )
+        with col_b:
+            brand_options = ["Toutes"] + sorted(
+                df_all["brand"].dropna().unique().tolist()
+            )
+            brand_filter = st.selectbox("Marque", options=brand_options, key="t1_brand")
         with col_c:
             cat_options = ["Toutes"] + sorted(
                 df_all["categorie_interne"].dropna().unique().tolist()
@@ -142,7 +149,7 @@ with tab1:
             )
 
         # Détecter changement de filtre → reset page
-        filter_sig = (search, cat_filter)
+        filter_sig = (search, brand_filter, cat_filter)
         if filter_sig != st.session_state.t1_filter_sig:
             st.session_state.t1_filter_sig = filter_sig
             st.session_state.t1_page       = 0
@@ -151,6 +158,8 @@ with tab1:
         df_f = df_all.copy()
         if search:
             df_f = df_f[df_f["product_name"].str.contains(search, case=False, na=False)]
+        if brand_filter != "Toutes":
+            df_f = df_f[df_f["brand"] == brand_filter]
         if cat_filter != "Toutes":
             df_f = df_f[df_f["categorie_interne"] == cat_filter]
 
@@ -177,6 +186,8 @@ with tab1:
             use_container_width=True,
             hide_index=True,
             column_config={
+                "key_brandxpdt":          st.column_config.TextColumn("Clé", width="medium"),
+                "brand":                  st.column_config.TextColumn("Marque", width="small"),
                 "product_name":           st.column_config.TextColumn("Produit"),
                 "categorie_interne":      st.column_config.TextColumn("Catégorie"),
                 "sous_categorie_interne": st.column_config.TextColumn("Sous-catégorie"),
@@ -243,21 +254,27 @@ with tab2:
             with get_connection() as conn:
                 with conn.cursor() as cur:
                     cur.execute("""
-                        SELECT v.product_name,
+                        SELECT v.brand,
+                               v.product_name,
                                COUNT(*) AS nb_verbatims,
                                cm.categorie_interne,
                                cm.sous_categorie_interne
                           FROM verbatims v
-                          LEFT JOIN categories_mapping cm USING (product_name)
-                         GROUP BY v.product_name, cm.categorie_interne, cm.sous_categorie_interne
-                         ORDER BY v.product_name
+                          LEFT JOIN categories_mapping cm
+                                 ON v.brand = cm.brand AND v.product_name = cm.product_name
+                         GROUP BY v.brand, v.product_name,
+                                  cm.categorie_interne, cm.sous_categorie_interne
+                         ORDER BY v.brand, v.product_name
                     """)
                     rows = cur.fetchall()
+            # key = brand + "||" + product_name  (affichage et lookup sans ambiguïté)
             st.session_state.t2_products = {
-                r[0]: {
-                    "nb_verbatims": r[1],
-                    "categorie":    r[2] or "—",
-                    "sous_cat":     r[3] or "—",
+                r[0] + "||" + r[1]: {
+                    "brand":        r[0],
+                    "product_name": r[1],
+                    "nb_verbatims": r[2],
+                    "categorie":    r[3] or "—",
+                    "sous_cat":     r[4] or "—",
                 }
                 for r in rows
             }
@@ -271,18 +288,22 @@ with tab2:
         empty_state("○", "Aucun produit en base", "Importez d'abord un fichier CSV.")
     else:
         # ── Sélection du produit ──────────────────────────────────────────────
-        selected = st.selectbox(
+        selected_key = st.selectbox(
             "Produit à renommer",
             options=list(products_map.keys()),
             index=None,
-            placeholder="Rechercher un produit…",
+            placeholder="Rechercher une marque || produit…",
             key="t2_select",
         )
 
-        if selected:
-            info = products_map[selected]
+        if selected_key:
+            info = products_map[selected_key]
+            old_brand   = info["brand"]
+            old_pname   = info["product_name"]
+            old_cm_key  = old_brand + old_pname
 
             metric_row([
+                {"label": "Marque",              "value": old_brand,                   "color": "cyan"},
                 {"label": "Verbatims concernés", "value": f"{info['nb_verbatims']:,}", "color": "warning"},
                 {"label": "Catégorie actuelle",  "value": info["categorie"],            "color": "blue"},
                 {"label": "Sous-catégorie",       "value": info["sous_cat"],             "color": "gray"},
@@ -295,9 +316,9 @@ with tab2:
             )
 
             new_name_clean = new_name.strip()
-            rename_ready   = bool(new_name_clean and new_name_clean != selected)
+            rename_ready   = bool(new_name_clean and new_name_clean != old_pname)
 
-            if new_name_clean and new_name_clean == selected:
+            if new_name_clean and new_name_clean == old_pname:
                 alert("Le nouveau nom est identique à l'ancien.", type="warning")
 
             if rename_ready:
@@ -307,7 +328,7 @@ with tab2:
                     f"et la table de correspondance (<code>categories_mapping</code>). "
                     "L'opération est irréversible.",
                     type="warning",
-                    title=f"Renommer « {selected} » → « {new_name_clean} »",
+                    title=f"Renommer « {old_pname} » → « {new_name_clean} » (marque : {old_brand})",
                 )
 
                 if not st.session_state.t2_confirm:
@@ -329,20 +350,21 @@ with tab2:
                             key="t2_yes",
                         ):
                             try:
+                                new_cm_key = old_brand + new_name_clean
                                 with get_connection() as conn:
                                     with conn.cursor() as cur:
                                         cur.execute(
                                             "UPDATE verbatims "
                                             "SET product_name = %s "
-                                            "WHERE product_name = %s",
-                                            (new_name_clean, selected),
+                                            "WHERE brand = %s AND product_name = %s",
+                                            (new_name_clean, old_brand, old_pname),
                                         )
                                         n_updated = cur.rowcount
                                         cur.execute(
                                             "UPDATE categories_mapping "
-                                            "SET product_name = %s "
-                                            "WHERE product_name = %s",
-                                            (new_name_clean, selected),
+                                            "SET product_name = %s, key_brandxpdt = %s "
+                                            "WHERE key_brandxpdt = %s",
+                                            (new_name_clean, new_cm_key, old_cm_key),
                                         )
                                     conn.commit()
 
@@ -352,8 +374,9 @@ with tab2:
                                 st.session_state.t3_data     = None
                                 st.session_state.t2_confirm  = False
                                 st.session_state.t2_success  = (
-                                    f"Produit <strong>{selected}</strong> renommé en "
-                                    f"<strong>{new_name_clean}</strong> — "
+                                    f"Produit <strong>{old_pname}</strong> renommé en "
+                                    f"<strong>{new_name_clean}</strong> "
+                                    f"(marque : {old_brand}) — "
                                     f"{n_updated:,} verbatim(s) mis à jour."
                                 )
                                 st.rerun()
@@ -402,7 +425,8 @@ with tab3:
                                cm.sous_categorie_interne,
                                cm.photo
                           FROM verbatims v
-                          LEFT JOIN categories_mapping cm USING (product_name)
+                          LEFT JOIN categories_mapping cm
+                                 ON v.brand = cm.brand AND v.product_name = cm.product_name
                          GROUP BY v.product_name, cm.categorie_interne,
                                   cm.sous_categorie_interne, cm.photo
                          ORDER BY nb_verbatims DESC

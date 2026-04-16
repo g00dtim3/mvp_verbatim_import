@@ -1,7 +1,7 @@
 -- ═══════════════════════════════════════════════════════════════
 -- Compass · Consumer Voice — Import Pipeline
 -- DDL Schema PostgreSQL / Supabase
--- v1.2
+-- v1.3
 -- ═══════════════════════════════════════════════════════════════
 
 -- ── Extensions ────────────────────────────────────────────────
@@ -71,14 +71,18 @@ CREATE TABLE IF NOT EXISTS verbatims (
 );
 
 -- ── Table : categories_mapping ────────────────────────────────
--- Source de vérité unique catégories. 1 entrée par product_name.
+-- Source de vérité unique catégories.
+-- Clé primaire : key_brandxpdt = brand || product_name (sans séparateur).
+-- Garantit l'unicité même si deux marques ont un produit au nom identique.
 CREATE TABLE IF NOT EXISTS categories_mapping (
-    product_name            VARCHAR(500)    PRIMARY KEY,
-    categorie_interne       VARCHAR(255)    NOT NULL,
-    sous_categorie_interne  VARCHAR(255)    NOT NULL,
-    photo                   BOOLEAN,
-    matched_at              TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
-    matched_by              VARCHAR(100)    DEFAULT 'system'
+    key_brandxpdt          VARCHAR(600)    PRIMARY KEY,  -- brand || product_name
+    brand                  VARCHAR(255)    NOT NULL,
+    product_name           VARCHAR(500)    NOT NULL,
+    categorie_interne      VARCHAR(255)    NOT NULL,
+    sous_categorie_interne VARCHAR(255)    NOT NULL,
+    photo                  BOOLEAN,
+    matched_at             TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
+    matched_by             VARCHAR(100)    DEFAULT 'system'
 );
 
 -- ── Index verbatims ───────────────────────────────────────────
@@ -100,26 +104,31 @@ CREATE INDEX IF NOT EXISTS idx_verbatims_source
 CREATE INDEX IF NOT EXISTS idx_verbatims_opinion
     ON verbatims (opinion);
 
--- Index composite pour les requêtes de matching fréquentes
-CREATE INDEX IF NOT EXISTS idx_verbatims_product_categorie
-    ON verbatims (product_name, categorie_interne);
+-- Index composite pour les lookups brand+product_name (import, propagation)
+CREATE INDEX IF NOT EXISTS idx_verbatims_brand_product
+    ON verbatims (brand, product_name);
 
 -- ── Index categories_mapping ──────────────────────────────────
 CREATE INDEX IF NOT EXISTS idx_categories_mapping_categorie
     ON categories_mapping (categorie_interne);
 
+CREATE INDEX IF NOT EXISTS idx_categories_mapping_brand_product
+    ON categories_mapping (brand, product_name);
+
 -- ── Vue utilitaire : produits sans catégorie ──────────────────
 CREATE OR REPLACE VIEW v_unmatched_products AS
 SELECT
+    v.brand,
     v.product_name,
     COUNT(*)                AS nb_verbatims,
     MIN(v.date)             AS first_seen,
     MAX(v.date)             AS last_seen,
     MAX(v.imported_at)      AS last_imported
 FROM verbatims v
-LEFT JOIN categories_mapping cm ON v.product_name = cm.product_name
-WHERE cm.product_name IS NULL
-GROUP BY v.product_name
+LEFT JOIN categories_mapping cm
+       ON v.brand = cm.brand AND v.product_name = cm.product_name
+WHERE cm.key_brandxpdt IS NULL
+GROUP BY v.brand, v.product_name
 ORDER BY nb_verbatims DESC;
 
 -- ── Vue utilitaire : résumé catégories ────────────────────────
@@ -132,18 +141,51 @@ SELECT
     MIN(v.date)                      AS date_min,
     MAX(v.date)                      AS date_max
 FROM categories_mapping cm
-LEFT JOIN verbatims v ON v.product_name = cm.product_name
+LEFT JOIN verbatims v ON v.brand = cm.brand AND v.product_name = cm.product_name
 GROUP BY cm.categorie_interne, cm.sous_categorie_interne
 ORDER BY nb_verbatims DESC;
+
+-- ═══════════════════════════════════════════════════════════════
+-- MIGRATION v1.2 → v1.3  (exécuter sur une base existante)
+-- ═══════════════════════════════════════════════════════════════
+-- Les instructions ci-dessous sont idempotentes (IF NOT EXISTS / IF EXISTS).
+-- À exécuter une seule fois sur les bases déjà créées avec v1.2.
+--
+-- ALTER TABLE categories_mapping
+--     ADD COLUMN IF NOT EXISTS key_brandxpdt VARCHAR(600),
+--     ADD COLUMN IF NOT EXISTS brand         VARCHAR(255);
+--
+-- -- Peupler key_brandxpdt depuis product_name (clé transitoire avant Table_CO)
+-- UPDATE categories_mapping
+--    SET brand = 'unknown', key_brandxpdt = 'unknown' || product_name
+--  WHERE key_brandxpdt IS NULL;
+--
+-- ALTER TABLE categories_mapping
+--     ALTER COLUMN key_brandxpdt SET NOT NULL,
+--     ALTER COLUMN brand         SET NOT NULL;
+--
+-- -- Créer la nouvelle PK (l'ancienne sur product_name est implicitement supprimée)
+-- ALTER TABLE categories_mapping DROP CONSTRAINT IF EXISTS categories_mapping_pkey;
+-- ALTER TABLE categories_mapping ADD PRIMARY KEY (key_brandxpdt);
+--
+-- DROP INDEX IF EXISTS idx_categories_mapping_categorie;
+-- CREATE INDEX IF NOT EXISTS idx_categories_mapping_categorie
+--     ON categories_mapping (categorie_interne);
+-- CREATE INDEX IF NOT EXISTS idx_categories_mapping_brand_product
+--     ON categories_mapping (brand, product_name);
+-- CREATE INDEX IF NOT EXISTS idx_verbatims_brand_product
+--     ON verbatims (brand, product_name);
+-- ═══════════════════════════════════════════════════════════════
 
 -- ═══════════════════════════════════════════════════════════════
 -- COMMENTAIRES
 -- ═══════════════════════════════════════════════════════════════
 COMMENT ON TABLE verbatims              IS 'Verbatims clients importés depuis l''API Semantiweb';
-COMMENT ON TABLE categories_mapping     IS 'Correspondance product_name → catégorie interne. Source de vérité unique.';
+COMMENT ON TABLE categories_mapping     IS 'Correspondance (brand, product_name) → catégorie interne. Clé : brand || product_name.';
 COMMENT ON TABLE import_logs            IS 'Journal de tous les imports avec contrôle doublon par hash fichier';
 COMMENT ON COLUMN verbatims.id          IS 'SHA-256(brand + date + product_name + verbatim_content) — garantit l''unicité et l''idempotence';
 COMMENT ON COLUMN verbatims.product_name IS 'Valeur exacte du champ product_name_SEMANTIWEB du CSV, renommé à l''import';
 COMMENT ON COLUMN verbatims.photo       IS 'NULL = non renseigné (import mensuel). true/false = renseigné (import initial ou matching)';
 COMMENT ON COLUMN import_logs.file_hash IS 'SHA-256 du contenu binaire du fichier CSV — utilisé pour bloquer les imports en doublon';
 COMMENT ON COLUMN import_logs.import_type IS 'initial = fichier historique complet / mensuel = export courant API';
+COMMENT ON COLUMN categories_mapping.key_brandxpdt IS 'Clé primaire = brand || product_name (concaténé sans séparateur)';
