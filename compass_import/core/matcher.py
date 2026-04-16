@@ -509,8 +509,7 @@ def apply_matching(conn, valid_rows: list[dict]) -> dict:
             categorie_interne      = m.categorie::varchar,
             sous_categorie_interne = m.sous_cat::varchar,
             photo                  = m.photo::boolean
-        FROM (VALUES %s) AS m(brand text, product_name text,
-                               categorie text, sous_cat text, photo text)
+        FROM (VALUES %s) AS m(brand, product_name, categorie, sous_cat, photo)
         WHERE v.brand = m.brand AND v.product_name = m.product_name
     """
     update_values = [
