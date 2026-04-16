@@ -13,7 +13,6 @@ Usage :
 
 import re
 import streamlit as st
-import streamlit.components.v1 as components
 from pathlib import Path
 from datetime import datetime
 from typing import Literal, Optional
@@ -39,8 +38,8 @@ def inject_css():
     """Injecte le design system Compass dans la page Streamlit.
 
     Note : Streamlit bloque les balises <script> dans st.markdown().
-    Le JavaScript de restauration du thème est injecté via
-    components.html() (iframe height=0) pour contourner cette limite.
+    Le JavaScript de restauration du thème est injecté via st.iframe()
+    (iframe height=0) pour contourner cette limite.
     """
     css_path = Path(__file__).parent / "style.css"
     with open(css_path) as f:
@@ -51,7 +50,7 @@ def inject_css():
 
     # Restauration du thème depuis localStorage via une iframe height=0.
     # window.parent.document cible le document Streamlit parent.
-    components.html(
+    st.iframe(
         """
         <script>
         (function () {
