@@ -303,6 +303,43 @@ def normalize_row(row: pd.Series, import_type: str) -> dict[str, Any]:
     }
 
 
+# ─── normalize_batch ──────────────────────────────────────────────────────────
+
+def normalize_batch(
+    df: "pd.DataFrame", import_type: str
+) -> tuple[list[dict], list[dict]]:
+    """
+    Normalise toutes les lignes d'un DataFrame CSV.
+
+    Wraps ``normalize_row`` en capturant les exceptions ligne par ligne.
+
+    Returns:
+        (rows, skip_details)
+        rows         — liste de dicts normalisés prêts pour import_batch.
+        skip_details — liste de dicts ``{ligne, raison, extrait}`` pour chaque
+                       ligne ignorée (``ligne`` = numéro CSV, 1-indexé header).
+    """
+    rows: list[dict] = []
+    skip_details: list[dict] = []
+
+    for csv_line, (_, row) in enumerate(df.iterrows(), start=2):
+        try:
+            rows.append(normalize_row(row, import_type))
+        except Exception as exc:
+            extrait = "; ".join(
+                f"{k}={str(v)[:30]}"
+                for k, v in row.items()
+                if v is not None and str(v).strip() not in ("", "nan")
+            )[:120]
+            skip_details.append({
+                "ligne":   csv_line,
+                "raison":  str(exc),
+                "extrait": extrait,
+            })
+
+    return rows, skip_details
+
+
 # ─── import_batch ─────────────────────────────────────────────────────────────
 
 def import_batch(conn, rows: list[dict], batch_id: str) -> dict:
