@@ -1,8 +1,8 @@
 """
-pages/4_Outils.py
+pages/3_Outils.py
 ──────────────────────────────────────────────────────────────
 Compass · Consumer Voice — Import Pipeline
-Module 4 — Maintenance et consultation.
+Module 3 — Maintenance et consultation.
 
 4 onglets :
   Tab 1 — Table de correspondance (categories_mapping paginée + export CSV)
@@ -12,6 +12,7 @@ Module 4 — Maintenance et consultation.
 """
 
 import io
+import json
 import sys
 from pathlib import Path
 
@@ -467,7 +468,7 @@ with tab3:
                 type="primary",
                 key="t3_goto_matching",
             ):
-                st.switch_page("pages/3_Matching.py")
+                st.switch_page("pages/2_Matching.py")
 
         st.markdown("")
         product_status_table(products)
@@ -574,12 +575,13 @@ with tab4:
         # ── Expandeurs détail ─────────────────────────────────────────────────
         st.markdown("##### Détail par import")
         for lg in filtered:
-            has_err = bool(lg.get("error_detail"))
+            raw_detail = lg.get("error_detail")
+            has_detail = bool(raw_detail)
             icon    = {"success": "✓", "partial": "⚠", "error": "✕",
                        "duplicate": "⊘", "running": "↻"}.get(lg["status"], "○")
             label   = (
                 f"{icon} [{lg['started_at']}] {lg['filename']}"
-                + (" — voir erreurs" if has_err else "")
+                + (" — voir détails" if has_detail else "")
             )
             with st.expander(label, expanded=False):
                 ca, cb, cc = st.columns(3)
@@ -594,9 +596,39 @@ with tab4:
                 with cc:
                     st.markdown(f"**Matchés :** {lg['rows_matched']:,}")
                     st.markdown(f"**Sans catégorie :** {lg['rows_unmatched']:,}")
-                if has_err:
-                    st.markdown("**Détail erreurs :**")
-                    st.code(lg["error_detail"], language=None)
+
+                if has_detail:
+                    # Essai parse JSON (nouveau format) ; fallback texte brut
+                    try:
+                        parsed = json.loads(raw_detail)
+                    except (json.JSONDecodeError, TypeError):
+                        parsed = {}
+
+                    skip_data   = parsed.get("skipped", [])
+                    batch_errs  = parsed.get("batch_errors", [])
+
+                    if skip_data:
+                        st.markdown(f"**Lignes ignorées ({len(skip_data)}) :**")
+                        st.dataframe(
+                            pd.DataFrame(skip_data, columns=["ligne", "raison", "extrait"]),
+                            use_container_width=True,
+                            hide_index=True,
+                            column_config={
+                                "ligne":   st.column_config.NumberColumn("Ligne CSV", width="small"),
+                                "raison":  st.column_config.TextColumn("Raison", width="large"),
+                                "extrait": st.column_config.TextColumn("Extrait", width="large"),
+                            },
+                        )
+
+                    if batch_errs:
+                        st.markdown("**Erreurs batch :**")
+                        for e in batch_errs:
+                            st.code(e)
+
+                    # Ancien format texte brut (imports avant migration)
+                    if not skip_data and not batch_errs:
+                        st.markdown("**Détail :**")
+                        st.code(raw_detail, language=None)
 
         st.markdown("")
 

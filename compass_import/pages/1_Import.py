@@ -41,7 +41,7 @@ from compass_ui.compass_ui import (
 from core.db import get_active_env, get_connection
 from core.hasher import file_hash as compute_file_hash
 from core.hasher import is_file_already_imported
-from core.importer import apply_known_categories, import_batch, normalize_row, parse_csv
+from core.importer import apply_known_categories, import_batch, normalize_batch, parse_csv
 
 # ── Configuration Streamlit ────────────────────────────────────────────────────
 st.set_page_config(
@@ -68,6 +68,7 @@ _DEFAULTS = {
     "import_stats":       None,   # dict résultats
     "import_duration_s":  0,
     "import_error":       None,
+    "skip_details":       None,   # list[{ligne, raison, extrait}]
 }
 for k, v in _DEFAULTS.items():
     if k not in st.session_state:
@@ -84,10 +85,11 @@ def _reset_from_step(step: int) -> None:
         st.session_state.file_name   = None
         st.session_state.df_parsed   = None
     if step <= 2:
-        st.session_state.batch_id    = None
-        st.session_state.import_done = False
+        st.session_state.batch_id     = None
+        st.session_state.import_done  = False
         st.session_state.import_stats = None
         st.session_state.import_error = None
+        st.session_state.skip_details = None
     st.session_state.step = step
 
 
@@ -334,13 +336,8 @@ if not st.session_state.import_done:
             unsafe_allow_html=True,
         )
 
-        skipped_parse = 0
-        rows: list[dict] = []
-        for _, row in df.iterrows():
-            try:
-                rows.append(normalize_row(row, mode))
-            except Exception:
-                skipped_parse += 1
+        rows, skip_details = normalize_batch(df, mode)
+        skipped_parse = len(skip_details)
 
         # ── Enrichissement avec les catégories connues ─────────────────────────
         try:
@@ -407,6 +404,15 @@ if not st.session_state.import_done:
             else "error"
         )
 
+        # ── Construire error_detail JSON ───────────────────────────────────────
+        import json as _json
+        error_payload: dict = {}
+        if skip_details:
+            error_payload["skipped"] = skip_details
+        if all_errors:
+            error_payload["batch_errors"] = all_errors
+        error_detail_str = _json.dumps(error_payload, ensure_ascii=False) if error_payload else None
+
         # ── Mettre à jour le log ───────────────────────────────────────────────
         try:
             with get_connection() as conn:
@@ -415,7 +421,7 @@ if not st.session_state.import_done:
                     batch_id,
                     final_stats,
                     final_status,
-                    error_detail="\n".join(all_errors) if all_errors else None,
+                    error_detail=error_detail_str,
                 )
         except Exception as exc:
             alert(f"Avertissement : impossible de finaliser le log : {exc}", type="warning")
@@ -423,6 +429,7 @@ if not st.session_state.import_done:
         st.session_state.import_stats      = final_stats
         st.session_state.import_duration_s = t_elapsed
         st.session_state.import_done       = True
+        st.session_state.skip_details      = skip_details
         st.session_state.step              = 3
 
         progress_placeholder.empty()
@@ -470,6 +477,22 @@ import_summary(
     duration_s=duration,
 )
 
+# Lignes ignorées à la normalisation
+skip_details = st.session_state.get("skip_details") or []
+if skip_details:
+    import pandas as _pd
+    with st.expander(f"⚠ {len(skip_details)} ligne(s) ignorée(s) — détail", expanded=False):
+        st.dataframe(
+            _pd.DataFrame(skip_details, columns=["ligne", "raison", "extrait"]),
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "ligne":   st.column_config.NumberColumn("Ligne CSV", width="small"),
+                "raison":  st.column_config.TextColumn("Raison", width="large"),
+                "extrait": st.column_config.TextColumn("Extrait", width="large"),
+            },
+        )
+
 # Erreurs par lot
 if stats.get("errors"):
     with st.expander(f"⚠ {len(stats['errors'])} lot(s) en erreur — détail"):
@@ -484,7 +507,7 @@ if stats.get("unmatched", 0) > 0:
         type="primary",
         key="goto_matching",
     ):
-        st.switch_page("pages/3_Matching.py")
+        st.switch_page("pages/2_Matching.py")
 
 # Bouton pour recommencer un nouvel import
 st.markdown("")

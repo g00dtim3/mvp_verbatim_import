@@ -1,5 +1,5 @@
 """
-app.py
+Home.py
 ──────────────────────────────────────────────────────────────
 Compass · Consumer Voice — Import Pipeline
 Page d'accueil et point d'entrée Streamlit.
@@ -78,10 +78,11 @@ def _load_global_stats() -> dict:
                 total_verbatims = cur.fetchone()[0]
 
                 cur.execute("""
-                    SELECT COUNT(DISTINCT v.product_name)
+                    SELECT COUNT(DISTINCT v.brand || v.product_name)
                       FROM verbatims v
-                      LEFT JOIN categories_mapping cm USING (product_name)
-                     WHERE cm.product_name IS NULL
+                      LEFT JOIN categories_mapping cm
+                             ON v.brand = cm.brand AND v.product_name = cm.product_name
+                     WHERE cm.key_brandxpdt IS NULL
                 """)
                 n_unmatched = cur.fetchone()[0]
 
@@ -153,7 +154,7 @@ st.caption(
     "Utilisez la navigation dans la barre latérale gauche pour accéder aux modules."
 )
 
-col1, col2, col3, col4 = st.columns(4)
+col1, col2, col3 = st.columns(3)
 
 _card_style = (
     "padding:1.4rem;background:var(--c-card-bg);"
@@ -177,23 +178,9 @@ with col1:
 with col2:
     st.markdown(f"""
     <div style="{_card_style}">
-        <div style="font-size:28px;margin-bottom:8px">✏</div>
-        <div style="font-weight:700;color:var(--c-deep);margin-bottom:6px">
-            2 — Enrichissement
-        </div>
-        <div style="font-size:12px;color:var(--c-text-2)">
-            Édition manuelle de catégorie, sous-catégorie et photo sur des
-            verbatims individuels ou en sélection filtrée.
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
-
-with col3:
-    st.markdown(f"""
-    <div style="{_card_style}">
         <div style="font-size:28px;margin-bottom:8px">🏷</div>
         <div style="font-weight:700;color:var(--c-deep);margin-bottom:6px">
-            3 — Matching
+            2 — Matching
         </div>
         <div style="font-size:12px;color:var(--c-text-2)">
             Assigner catégories via XLS avec menus déroulants dépendants.
@@ -202,15 +189,15 @@ with col3:
     </div>
     """, unsafe_allow_html=True)
 
-with col4:
+with col3:
     st.markdown(f"""
     <div style="{_card_style}">
         <div style="font-size:28px;margin-bottom:8px">🔧</div>
         <div style="font-weight:700;color:var(--c-deep);margin-bottom:6px">
-            4 — Outils
+            3 — Outils
         </div>
         <div style="font-size:12px;color:var(--c-text-2)">
-            Table de correspondance, renommage de produit en cascade,
+            Table de correspondance, enrichissement manuel, renommage produit,
             vérification et logs d'import.
         </div>
     </div>
@@ -230,4 +217,4 @@ if (stats.get("n_unmatched") or 0) > 0:
         type="primary",
         key="home_goto_matching",
     ):
-        st.switch_page("pages/3_Matching.py")
+        st.switch_page("pages/2_Matching.py")

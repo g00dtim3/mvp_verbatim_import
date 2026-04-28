@@ -1,8 +1,8 @@
 """
-pages/3_Matching.py
+pages/2_Matching.py
 ──────────────────────────────────────────────────────────────
 Compass · Consumer Voice — Import Pipeline
-Module 3 — Matching catégories.
+Module 2 — Matching catégories.
 
 Flux :
   1. Affichage de l'état actuel (produits sans catégorie)
