@@ -92,38 +92,9 @@ except Exception as exc:
     alert(f"Impossible de charger le référentiel des catégories : {exc}", type="error")
     st.stop()
 
-# ═══════════════════════════════════════════════════════════════
-# SECTION 1 — État actuel
-# ═══════════════════════════════════════════════════════════════
-
-st.markdown("### État actuel")
-
-if not unmatched_products:
-    empty_state(
-        "✓",
-        "Tous les produits sont matchés",
-        "Aucun verbatim ne manque de catégorie.",
-    )
-else:
-    total_verbatims = sum(p["nb_verbatims"] for p in unmatched_products)
-    metric_row([
-        {
-            "label": "Produits sans catégorie",
-            "value": len(unmatched_products),
-            "color": "warning",
-        },
-        {
-            "label": "Verbatims impactés",
-            "value": f"{total_verbatims:,}",
-            "color": "error",
-        },
-    ])
-    product_status_table(unmatched_products)
-
-st.divider()
 
 # ═══════════════════════════════════════════════════════════════
-# SECTION 2 — Export XLS
+# SECTION 1 — Export XLS
 # ═══════════════════════════════════════════════════════════════
 
 st.markdown("### 1 — Télécharger le fichier de matching")
@@ -166,7 +137,7 @@ else:
 st.divider()
 
 # ═══════════════════════════════════════════════════════════════
-# SECTION 3 — Réimport XLS complété
+# SECTION 2 — Réimport XLS complété
 # ═══════════════════════════════════════════════════════════════
 
 st.markdown("### 2 — Importer le fichier complété")
@@ -311,3 +282,33 @@ if uploaded_xls is not None:
             for k, v in _DEFAULTS.items():
                 st.session_state[k] = v
             st.rerun()
+
+# ═══════════════════════════════════════════════════════════════
+# SECTION 3 — État actuel
+# ═══════════════════════════════════════════════════════════════
+
+st.markdown("### État actuel")
+
+if not unmatched_products:
+    empty_state(
+        "✓",
+        "Tous les produits sont matchés",
+        "Aucun verbatim ne manque de catégorie.",
+    )
+else:
+    total_verbatims = sum(p["nb_verbatims"] for p in unmatched_products)
+    metric_row([
+        {
+            "label": "Produits sans catégorie",
+            "value": len(unmatched_products),
+            "color": "warning",
+        },
+        {
+            "label": "Verbatims impactés",
+            "value": f"{total_verbatims:,}",
+            "color": "error",
+        },
+    ])
+    product_status_table(unmatched_products)
+
+st.divider()
