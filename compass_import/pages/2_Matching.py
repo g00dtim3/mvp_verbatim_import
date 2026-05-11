@@ -36,6 +36,7 @@ from core.hasher import file_hash as compute_file_hash
 from core.matcher import (
     apply_matching,
     export_matching_xls,
+    get_all_products,
     get_unmatched_products,
     validate_matching_xls,
 )
@@ -82,6 +83,7 @@ with st.sidebar:
 try:
     with get_connection() as conn:
         unmatched_products = get_unmatched_products(conn)
+        all_products       = get_all_products(conn)
 except Exception as exc:
     alert(f"Impossible de charger les produits depuis la base : {exc}", type="error")
     st.stop()
@@ -99,17 +101,17 @@ except Exception as exc:
 
 st.markdown("### 1 — Exporter le fichier de matching")
 
-if not unmatched_products:
+if not all_products:
     st.caption(
-        "Aucun produit à matcher. Le fichier de matching ne sera généré "
-        "qu'après un import mensuel comportant des produits inconnus."
+        "Aucun produit trouvé. Le fichier de matching sera disponible "
+        "après un premier import mensuel."
     )
 else:
     # Générer le XLS et le mettre en cache (éviter de le régénérer à chaque rerun)
     if st.session_state.match_xls_bytes is None:
         with st.spinner("Génération du fichier XLS…"):
             try:
-                xls_bytes = export_matching_xls(unmatched_products, referentiel)
+                xls_bytes = export_matching_xls(all_products, referentiel)
                 st.session_state.match_xls_bytes = xls_bytes
             except Exception as exc:
                 alert(f"Erreur lors de la génération du XLS : {exc}", type="error")
@@ -118,13 +120,17 @@ else:
         xls_bytes = st.session_state.match_xls_bytes
 
     if xls_bytes:
+        n_matched   = len(all_products) - len(unmatched_products)
+        n_unmatched = len(unmatched_products)
         st.markdown(
-            "Exportez le fichier, complétez les colonnes "
-            "**catégorie**, **sous-catégorie** et **photo** dans Excel "
-            "ou LibreOffice, puis réimportez-le ci-dessous."
+            f"Le fichier contient **{len(all_products)} produit(s)** au total — "
+            f"**{n_unmatched}** à compléter (fond jaune) et "
+            f"**{n_matched}** déjà matchés (fond vert, modifiables). "
+            "Complétez ou corrigez les colonnes **catégorie**, **sous-catégorie** "
+            "et **photo** dans Excel ou LibreOffice, puis réimportez-le ci-dessous."
         )
         st.download_button(
-            label="📥 Exporter le fichier de matching",
+            label="📥 Exporter le fichier de matching complet",
             data=xls_bytes,
             file_name="matching_categories.xlsx",
             mime=(
@@ -163,7 +169,7 @@ if uploaded_xls is not None:
 
     # ── Validation ────────────────────────────────────────────────────────────
     if st.session_state.match_validation is None:
-        original_keys = {p["brand"] + p["product_name"] for p in unmatched_products}
+        original_keys = {p["brand"] + p["product_name"] for p in all_products}
         try:
             validation = validate_matching_xls(
                 xls_bytes_uploaded, referentiel, original_keys

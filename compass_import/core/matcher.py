@@ -5,9 +5,9 @@ Compass · Consumer Voice — Import Pipeline
 Module 3 — Matching catégories : détection, export XLS, validation, propagation.
 
 Flux d'utilisation typique :
-    products   = get_unmatched_products(conn)
+    products   = get_all_products(conn)
     xls_bytes  = export_matching_xls(products, referentiel)
-    # … opérateur remplit le XLS dans Excel …
+    # … opérateur remplit / corrige le XLS dans Excel …
     result     = validate_matching_xls(xls_bytes, referentiel, original_names)
     stats      = apply_matching(conn, result["valid"])
 """
@@ -37,7 +37,8 @@ _CONFIG_PATH = Path(__file__).parent.parent / "config.toml"
 # Style constants (from config.toml [matching] — hard-coded here as fallback)
 _HEADER_FILL   = "1F6ED4"  # Compass blue
 _HEADER_FONT   = "FFFFFF"  # white text
-_EDITABLE_FILL = "FFFBEB"  # yellow-ish — editable cells
+_EDITABLE_FILL = "FFFBEB"  # yellow-ish — editable cells (unmatched)
+_MATCHED_FILL  = "EAF4EA"  # light green — editable cells (already matched)
 _LOCKED_FILL   = "F3F4F6"  # light gray — locked cells
 _REF_FILL      = "E8F0FE"  # light blue — Référentiel headers
 _VALID_PHOTO   = {"true", "false"}
@@ -97,6 +98,46 @@ def get_unmatched_products(conn) -> list[dict]:
         return [dict(zip(cols, row)) for row in cur.fetchall()]
 
 
+# ─── get_all_products ─────────────────────────────────────────────────────────
+
+def get_all_products(conn) -> list[dict]:
+    """
+    Retourne **tous** les produits présents dans ``verbatims``, avec leurs
+    valeurs de catégorisation existantes issues de ``categories_mapping``
+    (NULL si le produit n'est pas encore matché).
+
+    Les produits non matchés apparaissent en premier (catégorie NULL),
+    puis les produits déjà matchés, triés par nb_verbatims décroissant.
+
+    Args:
+        conn: Connexion psycopg2 active.
+
+    Returns:
+        Liste de dicts avec clés ``brand``, ``product_name``, ``nb_verbatims``,
+        ``categorie_interne``, ``sous_categorie_interne``, ``photo``.
+        Les trois dernières clés sont ``None`` si le produit n'est pas matché.
+    """
+    query = """
+        SELECT
+            v.brand,
+            v.product_name,
+            COUNT(*) AS nb_verbatims,
+            cm.categorie_interne,
+            cm.sous_categorie_interne,
+            cm.photo
+          FROM verbatims v
+          LEFT JOIN categories_mapping cm
+                 ON v.brand = cm.brand AND v.product_name = cm.product_name
+         GROUP BY v.brand, v.product_name,
+                  cm.categorie_interne, cm.sous_categorie_interne, cm.photo
+         ORDER BY (cm.key_brandxpdt IS NOT NULL), nb_verbatims DESC
+    """
+    with conn.cursor() as cur:
+        cur.execute(query)
+        cols = [desc[0] for desc in cur.description]
+        return [dict(zip(cols, row)) for row in cur.fetchall()]
+
+
 # ─── export_matching_xls ─────────────────────────────────────────────────────
 
 def export_matching_xls(products: list[dict], referentiel: dict) -> bytes:
@@ -104,9 +145,11 @@ def export_matching_xls(products: list[dict], referentiel: dict) -> bytes:
     Génère un fichier XLS (.xlsx) pour le matching des catégories.
 
     Structure :
-    - Onglet 1 "Matching" : une ligne par produit à matcher.
-      Colonnes A-B verrouillées (product_name, nb_verbatims).
-      Colonnes C-E éditables avec menus déroulants (categorie, sous-catégorie, photo).
+    - Onglet 1 "Matching" : une ligne par produit.
+      Colonnes A-D verrouillées (key_brandxpdt, brand, product_name, nb_verbatims).
+      Colonnes E-G éditables avec menus déroulants (categorie, sous-catégorie, photo).
+      Les produits déjà matchés ont les colonnes E-G pré-remplies (fond vert clair).
+      Les produits non matchés ont les colonnes E-G vides (fond jaune).
     - Onglet 2 "Référentiel" : toutes les combinaisons valides, lecture seule.
       Sert aussi de source pour les dropdowns de l'onglet Matching.
 
@@ -114,19 +157,23 @@ def export_matching_xls(products: list[dict], referentiel: dict) -> bytes:
     via des named ranges et la formule INDIRECT(SUBSTITUTE(Cn," ","_")).
 
     Args:
-        products: Liste de dicts ``{product_name, nb_verbatims}`` — sortie
-                  de ``get_unmatched_products()``.
+        products: Liste de dicts ``{brand, product_name, nb_verbatims}`` — sortie
+                  de ``get_all_products()`` ou ``get_unmatched_products()``.
+                  Les clés optionnelles ``categorie_interne``,
+                  ``sous_categorie_interne`` et ``photo`` servent à pré-remplir
+                  les colonnes éditables pour les produits déjà matchés.
         referentiel: Dict ``{categorie: [sous_categories]}`` — sortie de
                      ``load_referentiel()``.
 
     Returns:
         Contenu binaire du fichier .xlsx.
     """
-    config   = _load_config().get("matching", {})
-    hdr_fill = config.get("header_fill_color", _HEADER_FILL)
-    hdr_font = config.get("header_font_color", _HEADER_FONT)
-    edt_fill = config.get("editable_fill_color", _EDITABLE_FILL)
-    lck_fill = config.get("locked_fill_color", _LOCKED_FILL)
+    config     = _load_config().get("matching", {})
+    hdr_fill   = config.get("header_fill_color", _HEADER_FILL)
+    hdr_font   = config.get("header_font_color", _HEADER_FONT)
+    edt_fill   = config.get("editable_fill_color", _EDITABLE_FILL)
+    lck_fill   = config.get("locked_fill_color", _LOCKED_FILL)
+    match_fill = config.get("matched_fill_color", _MATCHED_FILL)
 
     wb = Workbook()
 
@@ -197,6 +244,7 @@ def export_matching_xls(products: list[dict], referentiel: dict) -> bytes:
     match_hdr_fill = PatternFill("solid", fgColor=hdr_fill)
     match_hdr_font = Font(bold=True, color=hdr_font, name="Calibri", size=11)
     edt_bg         = PatternFill("solid", fgColor=edt_fill)
+    matched_bg     = PatternFill("solid", fgColor=match_fill)
     lck_bg         = PatternFill("solid", fgColor=lck_fill)
     align_center   = Alignment(horizontal="center", vertical="center")
     align_left     = Alignment(horizontal="left",   vertical="center", wrap_text=False)
@@ -222,8 +270,22 @@ def export_matching_xls(products: list[dict], referentiel: dict) -> bytes:
     # ── Data rows ─────────────────────────────────────────────────────────────
     n_rows = len(products)
     for row_idx, product in enumerate(products, start=2):
-        brand_val = product.get("brand", "")
-        pname_val = product.get("product_name", "")
+        brand_val   = product.get("brand", "")
+        pname_val   = product.get("product_name", "")
+        cat_val     = product.get("categorie_interne") or ""
+        sous_val    = product.get("sous_categorie_interne") or ""
+        photo_raw   = product.get("photo")
+        is_matched  = bool(cat_val)
+
+        if photo_raw is None:
+            photo_val = ""
+        elif isinstance(photo_raw, bool):
+            photo_val = "true" if photo_raw else "false"
+        else:
+            photo_val = str(photo_raw).lower()
+
+        # Fond vert clair pour les lignes déjà matchées, jaune pour les nouvelles
+        row_edt_bg = matched_bg if is_matched else edt_bg
 
         # A — key_brandxpdt (locked)
         c = ws_match.cell(row=row_idx, column=1, value=brand_val + pname_val)
@@ -241,17 +303,17 @@ def export_matching_xls(products: list[dict], referentiel: dict) -> bytes:
         c = ws_match.cell(row=row_idx, column=4, value=product.get("nb_verbatims", 0))
         c.fill = lck_bg; c.alignment = align_center; c.protection = Protection(locked=True)
 
-        # E — categorie_interne (editable)
-        c = ws_match.cell(row=row_idx, column=5)
-        c.fill = edt_bg; c.alignment = align_center; c.protection = Protection(locked=False)
+        # E — categorie_interne (editable, pré-rempli si déjà matché)
+        c = ws_match.cell(row=row_idx, column=5, value=cat_val or None)
+        c.fill = row_edt_bg; c.alignment = align_center; c.protection = Protection(locked=False)
 
-        # F — sous_categorie_interne (editable)
-        c = ws_match.cell(row=row_idx, column=6)
-        c.fill = edt_bg; c.alignment = align_center; c.protection = Protection(locked=False)
+        # F — sous_categorie_interne (editable, pré-rempli si déjà matché)
+        c = ws_match.cell(row=row_idx, column=6, value=sous_val or None)
+        c.fill = row_edt_bg; c.alignment = align_center; c.protection = Protection(locked=False)
 
-        # G — photo (editable)
-        c = ws_match.cell(row=row_idx, column=7)
-        c.fill = edt_bg; c.alignment = align_center; c.protection = Protection(locked=False)
+        # G — photo (editable, pré-rempli si déjà matché)
+        c = ws_match.cell(row=row_idx, column=7, value=photo_val or None)
+        c.fill = row_edt_bg; c.alignment = align_center; c.protection = Protection(locked=False)
 
     # ── Column widths ─────────────────────────────────────────────────────────
     ws_match.column_dimensions["A"].width = 50   # key_brandxpdt
