@@ -97,7 +97,7 @@ except Exception as exc:
 # SECTION 1 — Export XLS
 # ═══════════════════════════════════════════════════════════════
 
-st.markdown("### 1 — Télécharger le fichier de matching")
+st.markdown("### 1 — Exporter le fichier de matching")
 
 if not unmatched_products:
     st.caption(
