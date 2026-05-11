@@ -2,10 +2,10 @@
 pages/1_Import.py
 ──────────────────────────────────────────────────────────────
 Compass · Consumer Voice — Import Pipeline
-Module 1 — Import mensuel et initial de fichiers CSV Semantiweb.
+Module 1 — Import périodique et initial de fichiers CSV Semantiweb.
 
 Flux :
-  Étape 0 — Sélection du mode (initial / mensuel)
+  Étape 0 — Sélection du mode (initial / périodique)
   Étape 1 — Upload + contrôle anti-doublon hash fichier
   Étape 2 — Validation CSV + aperçu
   Étape 3 — Import par batches avec barre de progression
@@ -142,14 +142,14 @@ def _log_update(conn, batch_id: str, stats: dict, status: str,
 _mode = st.session_state.import_mode
 _badge = (
     "Import initial" if _mode == "initial"
-    else "Import mensuel" if _mode == "mensuel"
+    else "Import périodique" if _mode == "mensuel"
     else None
 )
 _badge_type = "cyan" if _mode == "initial" else "info"
 
 page_header(
     title="Import",
-    subtitle="Charger le fichier CSV mensuel de l'API",
+    subtitle="Charger le fichier CSV de l'API",
     badge=_badge,
     badge_type=_badge_type,
 )
@@ -199,7 +199,7 @@ else:
             "Utilisez le module <strong>Matching catégories</strong> pour les compléter."
         ),
         type="info",
-        title="Import mensuel courant",
+        title="Import périodique courant",
     )
 
 st.divider()
