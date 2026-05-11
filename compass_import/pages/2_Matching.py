@@ -119,12 +119,12 @@ else:
 
     if xls_bytes:
         st.markdown(
-            "Téléchargez le fichier, complétez les colonnes "
+            "Exportez le fichier, complétez les colonnes "
             "**catégorie**, **sous-catégorie** et **photo** dans Excel "
             "ou LibreOffice, puis réimportez-le ci-dessous."
         )
         st.download_button(
-            label="📥 Télécharger le fichier de matching",
+            label="📥 Exporter le fichier de matching",
             data=xls_bytes,
             file_name="matching_categories.xlsx",
             mime=(
