@@ -130,7 +130,7 @@ def get_all_products(conn) -> list[dict]:
                  ON v.brand = cm.brand AND v.product_name = cm.product_name
          GROUP BY v.brand, v.product_name,
                   cm.categorie_interne, cm.sous_categorie_interne, cm.photo
-         ORDER BY (cm.key_brandxpdt IS NOT NULL), nb_verbatims DESC
+         ORDER BY (MAX(cm.key_brandxpdt) IS NOT NULL), nb_verbatims DESC
     """
     with conn.cursor() as cur:
         cur.execute(query)
