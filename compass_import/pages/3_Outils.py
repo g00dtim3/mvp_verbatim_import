@@ -12,7 +12,6 @@ Module 3 — Maintenance et consultation.
 """
 
 import io
-import json
 import sys
 from pathlib import Path
 
@@ -34,6 +33,7 @@ from compass_ui.compass_ui import (
     sidebar_header,
     theme_toggle,
 )
+from compass_ui.skip_table import render_skip_details
 from core.db import get_active_env, get_connection
 
 # ── Page config ───────────────────────────────────────────────────────────────
@@ -500,6 +500,7 @@ with tab4:
                                rows_total,
                                rows_inserted,
                                rows_skipped,
+                               rows_duplicates,
                                rows_matched,
                                rows_unmatched,
                                status,
@@ -510,6 +511,15 @@ with tab4:
                          ORDER BY started_at DESC
                     """)
                     rows = cur.fetchall()
+                    # Batches ayant encore des verbatims en base — permet de
+                    # repérer les logs antérieurs à une reprise à zéro dont
+                    # les données ont été purgées (cf. spec §2.8).
+                    cur.execute("""
+                        SELECT DISTINCT import_batch_id
+                          FROM verbatims
+                         WHERE import_batch_id IS NOT NULL
+                    """)
+                    live_batch_ids = {str(r[0]) for r in cur.fetchall()}
             st.session_state.t4_data = [
                 {
                     "id":             str(r[0]),
@@ -519,11 +529,15 @@ with tab4:
                     "rows_total":     r[5] or 0,
                     "rows_inserted":  r[6] or 0,
                     "rows_skipped":   r[7] or 0,
-                    "rows_matched":   r[8] or 0,
-                    "rows_unmatched": r[9] or 0,
-                    "status":         r[10] or "—",
-                    "error_detail":   r[11],
-                    "duration_s":     r[12] or 0,
+                    "rows_duplicates": r[8] or 0,
+                    "rows_matched":   r[9] or 0,
+                    "rows_unmatched": r[10] or 0,
+                    "status":         r[11] or "—",
+                    "error_detail":   r[12],
+                    "duration_s":     r[13] or 0,
+                    "data_purged": (
+                        (r[6] or 0) > 0 and str(r[0]) not in live_batch_ids
+                    ),
                 }
                 for r in rows
             ]
@@ -579,11 +593,21 @@ with tab4:
             has_detail = bool(raw_detail)
             icon    = {"success": "✓", "partial": "⚠", "error": "✕",
                        "duplicate": "⊘", "running": "↻"}.get(lg["status"], "○")
+            reset_prefix = "⟲ REPRISE — " if lg["import_type"] == "reset" else ""
             label   = (
-                f"{icon} [{lg['started_at']}] {lg['filename']}"
+                f"{icon} {reset_prefix}[{lg['started_at']}] {lg['filename']}"
                 + (" — voir détails" if has_detail else "")
             )
             with st.expander(label, expanded=False):
+                if lg.get("data_purged"):
+                    alert(
+                        f"Données purgées lors de la reprise du "
+                        f"{lg['started_at']}. Les compteurs et le détail "
+                        "ci-dessous restent affichés à titre d'audit — "
+                        "les verbatims correspondants n'existent plus en base.",
+                        type="warning",
+                    )
+
                 ca, cb, cc = st.columns(3)
                 with ca:
                     st.markdown(f"**Batch ID :** `{lg['id'][:8]}…`")
@@ -592,43 +616,14 @@ with tab4:
                 with cb:
                     st.markdown(f"**Total lignes :** {lg['rows_total']:,}")
                     st.markdown(f"**Insérés :** {lg['rows_inserted']:,}")
-                    st.markdown(f"**Skipped :** {lg['rows_skipped']:,}")
+                    st.markdown(f"**Ignorées :** {lg['rows_skipped']:,}")
                 with cc:
+                    st.markdown(f"**Doublons :** {lg['rows_duplicates']:,}")
                     st.markdown(f"**Matchés :** {lg['rows_matched']:,}")
                     st.markdown(f"**Sans catégorie :** {lg['rows_unmatched']:,}")
 
                 if has_detail:
-                    # Essai parse JSON (nouveau format) ; fallback texte brut
-                    try:
-                        parsed = json.loads(raw_detail)
-                    except (json.JSONDecodeError, TypeError):
-                        parsed = {}
-
-                    skip_data   = parsed.get("skipped", [])
-                    batch_errs  = parsed.get("batch_errors", [])
-
-                    if skip_data:
-                        st.markdown(f"**Lignes ignorées ({len(skip_data)}) :**")
-                        st.dataframe(
-                            pd.DataFrame(skip_data, columns=["ligne", "raison", "extrait"]),
-                            use_container_width=True,
-                            hide_index=True,
-                            column_config={
-                                "ligne":   st.column_config.NumberColumn("Ligne CSV", width="small"),
-                                "raison":  st.column_config.TextColumn("Raison", width="large"),
-                                "extrait": st.column_config.TextColumn("Extrait", width="large"),
-                            },
-                        )
-
-                    if batch_errs:
-                        st.markdown("**Erreurs batch :**")
-                        for e in batch_errs:
-                            st.code(e)
-
-                    # Ancien format texte brut (imports avant migration)
-                    if not skip_data and not batch_errs:
-                        st.markdown("**Détail :**")
-                        st.code(raw_detail, language=None)
+                    render_skip_details(raw_detail, key_prefix=f"log_{lg['id']}")
 
         st.markdown("")
 
@@ -639,7 +634,8 @@ with tab4:
                 "fichier":        lg["filename"],
                 "type":           lg["import_type"],
                 "inseres":        lg["rows_inserted"],
-                "skippes":        lg["rows_skipped"],
+                "ignorees":       lg["rows_skipped"],
+                "doublons":       lg["rows_duplicates"],
                 "matches":        lg["rows_matched"],
                 "sans_categorie": lg["rows_unmatched"],
                 "statut":         lg["status"],

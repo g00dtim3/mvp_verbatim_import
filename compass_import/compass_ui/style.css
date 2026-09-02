@@ -752,6 +752,7 @@ hr {
 .compass-log-table tbody tr:last-child td { border-bottom: none; }
 .compass-log-table tbody tr:hover td      { background: var(--c-surface-2); }
 .compass-log-table tbody tr.alt td        { background: var(--c-surface-2); }
+.compass-log-table tbody tr.reset td      { background: var(--c-warning-bg); border-top: 2px solid var(--c-warning); border-bottom: 2px solid var(--c-warning); font-weight: 600; }
 
 /* ── Sidebar logo ─────────────────────────────────────────── */
 .compass-sidebar-logo {

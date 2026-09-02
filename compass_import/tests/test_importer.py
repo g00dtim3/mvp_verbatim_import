@@ -10,8 +10,10 @@ import pandas as pd
 import pytest
 
 from core.importer import (
+    RowValidationError,
     apply_known_categories,
     import_batch,
+    normalize_batch,
     normalize_row,
     parse_csv,
 )
@@ -38,7 +40,8 @@ VALID_CSV_BYTES = ("\n".join([_HEADER, *_ROW]) + "\n").encode("utf-8-sig")
 
 @pytest.fixture
 def valid_df() -> pd.DataFrame:
-    return parse_csv(VALID_CSV_BYTES)
+    df, _bad_lines = parse_csv(VALID_CSV_BYTES)
+    return df
 
 
 @pytest.fixture
@@ -49,21 +52,27 @@ def valid_row(valid_df) -> pd.Series:
 # ─── parse_csv ────────────────────────────────────────────────────────────────
 
 class TestParseCsv:
-    def test_returns_dataframe(self):
-        df = parse_csv(VALID_CSV_BYTES)
+    def test_returns_dataframe_and_bad_lines_tuple(self):
+        df, bad_lines = parse_csv(VALID_CSV_BYTES)
         assert isinstance(df, pd.DataFrame)
+        assert isinstance(bad_lines, list)
+
+    def test_no_bad_lines_on_valid_csv(self):
+        _df, bad_lines = parse_csv(VALID_CSV_BYTES)
+        assert bad_lines == []
 
     def test_correct_row_count(self):
-        assert len(parse_csv(VALID_CSV_BYTES)) == 1
+        df, _ = parse_csv(VALID_CSV_BYTES)
+        assert len(df) == 1
 
     def test_required_columns_present(self):
-        df = parse_csv(VALID_CSV_BYTES)
+        df, _ = parse_csv(VALID_CSV_BYTES)
         for col in ("brand", "country", "date", "product_name_SEMANTIWEB",
                     "verbatim_content", "sampling", "opinion", "source"):
             assert col in df.columns, f"Missing column: {col}"
 
     def test_all_columns_string_dtype(self):
-        df = parse_csv(VALID_CSV_BYTES)
+        df, _ = parse_csv(VALID_CSV_BYTES)
         for col in df.columns:
             assert pd.api.types.is_string_dtype(df[col]), (
                 f"Column {col} is not a string dtype (got {df[col].dtype})"
@@ -77,11 +86,12 @@ class TestParseCsv:
             ";;"
         )
         csv = ("\n".join([_HEADER, _ROW[0], row2]) + "\n").encode("utf-8-sig")
-        assert len(parse_csv(csv)) == 2
+        df, _ = parse_csv(csv)
+        assert len(df) == 2
 
     def test_handles_utf8_bom(self):
         # VALID_CSV_BYTES is already encoded with utf-8-sig
-        df = parse_csv(VALID_CSV_BYTES)
+        df, _ = parse_csv(VALID_CSV_BYTES)
         assert "guid" in df.columns  # first col, no BOM prefix
 
     def test_raises_on_missing_required_column(self):
@@ -109,6 +119,24 @@ class TestParseCsv:
         ).encode("utf-8-sig")
         with pytest.raises(ValueError):
             parse_csv(bad)
+
+    def test_malformed_line_captured_not_raised(self):
+        """Une ligne avec trop de champs (spec §2.9 : 30 colonnes au lieu de
+        25) ne doit plus faire échouer tout le fichier — elle est capturée
+        dans bad_lines, le reste du fichier reste exploitable."""
+        row2 = (
+            "def456;Nivea;DE;01/07/2024;negative;Cream SEMANTIWEB;2;"
+            "eBay;Pas terrible;0;"
+            "0;negative;0;0;0;0;0;0;0;"
+            ";;;;;;;;;;"  # bien plus de champs que l'en-tête
+        )
+        csv = ("\n".join([_HEADER, _ROW[0], row2]) + "\n").encode("utf-8-sig")
+        df, bad_lines = parse_csv(csv)
+        assert len(df) == 1  # seule la ligne valide est dans le DataFrame
+        assert len(bad_lines) == 1
+        assert bad_lines[0]["code"] == "LIGNE_MALFORMEE"
+        assert bad_lines[0]["ligne"] is None  # numéro non déterminable
+        assert bad_lines[0]["extrait"]  # contenu brut conservé pour diagnostic
 
 
 # ─── normalize_row ────────────────────────────────────────────────────────────
@@ -241,9 +269,198 @@ class TestNormalizeRow:
             _HEADER + "\nabc;B;FR;2024-06-15;positive;P;4;S;C;0;"
             "0;0;0;0;0;0;0;0;0;;;\n"
         ).encode("utf-8-sig")
-        df = parse_csv(csv_bytes)
+        df, _ = parse_csv(csv_bytes)
         result = normalize_row(df.iloc[0], "mensuel")
         assert result["date"] == date(2024, 6, 15)
+
+    def test_guid_extracted(self, valid_row):
+        result = normalize_row(valid_row, "mensuel")
+        assert result["guid"] == "abc123"
+
+    def test_hash_changes_with_country(self, valid_df):
+        """Scénario B (lot 1) : même avis, pays différent → id distinct."""
+        row_fr = valid_df.iloc[0].copy()
+        row_be = valid_df.iloc[0].copy()
+        row_be["country"] = "BE"
+        id_fr = normalize_row(row_fr, "mensuel")["id"]
+        id_be = normalize_row(row_be, "mensuel")["id"]
+        assert id_fr != id_be
+
+    def test_hash_changes_with_source(self, valid_df):
+        row_amazon = valid_df.iloc[0].copy()
+        row_site = valid_df.iloc[0].copy()
+        row_site["source"] = "Site marque"
+        id_amazon = normalize_row(row_amazon, "mensuel")["id"]
+        id_site = normalize_row(row_site, "mensuel")["id"]
+        assert id_amazon != id_site
+
+
+# ─── normalize_row — RowValidationError (spec §2.3) ───────────────────────────
+
+class TestNormalizeRowValidation:
+    def test_date_manquante_code(self, valid_df):
+        row = valid_df.iloc[0].copy()
+        row["date"] = ""
+        with pytest.raises(RowValidationError) as exc_info:
+            normalize_row(row, "mensuel")
+        assert exc_info.value.code == "DATE_MANQUANTE"
+        assert exc_info.value.champ == "date"
+
+    def test_date_invalide_code(self, valid_df):
+        row = valid_df.iloc[0].copy()
+        row["date"] = "31/02/2025"
+        with pytest.raises(RowValidationError) as exc_info:
+            normalize_row(row, "mensuel")
+        assert exc_info.value.code == "DATE_INVALIDE"
+        assert exc_info.value.champ == "date"
+
+    def test_rating_invalid_does_not_raise(self, valid_df):
+        """Les champs non structurants restent tolérants (spec §2.3) :
+        rating invalide → None, la ligne passe, pas d'exception."""
+        row = valid_df.iloc[0].copy()
+        row["rating"] = "abc"
+        result = normalize_row(row, "mensuel")
+        assert result["rating"] is None
+
+    def test_verbatim_vide_tolerated_by_default(self, valid_df):
+        """Comportement par défaut inchangé : skip_si_verbatim_vide=false."""
+        row = valid_df.iloc[0].copy()
+        row["verbatim_content"] = ""
+        result = normalize_row(row, "mensuel", {
+            "skip_si_verbatim_vide": False,
+            "skip_si_brand_vide": False,
+            "skip_si_produit_vide": False,
+        })
+        assert result["verbatim_content"] == ""
+
+    def test_verbatim_vide_blocks_when_rule_enabled(self, valid_df):
+        row = valid_df.iloc[0].copy()
+        row["verbatim_content"] = ""
+        with pytest.raises(RowValidationError) as exc_info:
+            normalize_row(row, "mensuel", {
+                "skip_si_verbatim_vide": True,
+                "skip_si_brand_vide": False,
+                "skip_si_produit_vide": False,
+            })
+        assert exc_info.value.code == "VERBATIM_VIDE"
+
+    def test_brand_vide_blocks_when_rule_enabled(self, valid_df):
+        row = valid_df.iloc[0].copy()
+        row["brand"] = ""
+        with pytest.raises(RowValidationError) as exc_info:
+            normalize_row(row, "mensuel", {
+                "skip_si_verbatim_vide": False,
+                "skip_si_brand_vide": True,
+                "skip_si_produit_vide": False,
+            })
+        assert exc_info.value.code == "BRAND_MANQUANTE"
+
+    def test_produit_vide_blocks_when_rule_enabled(self, valid_df):
+        row = valid_df.iloc[0].copy()
+        row["product_name_SEMANTIWEB"] = ""
+        with pytest.raises(RowValidationError) as exc_info:
+            normalize_row(row, "mensuel", {
+                "skip_si_verbatim_vide": False,
+                "skip_si_brand_vide": False,
+                "skip_si_produit_vide": True,
+            })
+        assert exc_info.value.code == "PRODUIT_MANQUANT"
+
+    def test_default_validation_rules_all_tolerant(self, valid_df):
+        """Sans validation_rules explicite, la config par défaut ne durcit
+        rien (config.toml [import.validation] désactivé par défaut)."""
+        row = valid_df.iloc[0].copy()
+        row["brand"] = ""
+        row["product_name_SEMANTIWEB"] = ""
+        row["verbatim_content"] = ""
+        result = normalize_row(row, "mensuel")  # pas de validation_rules
+        assert result["brand"] == ""
+        assert result["product_name"] == ""
+        assert result["verbatim_content"] == ""
+
+
+# ─── normalize_batch (spec §2.4, §2.9) ────────────────────────────────────────
+
+class TestNormalizeBatch:
+    def test_valid_rows_produce_no_skips(self):
+        df, _ = parse_csv(VALID_CSV_BYTES)
+        rows, skip_details, skips_par_code = normalize_batch(df, "mensuel")
+        assert len(rows) == 1
+        assert skip_details == []
+        assert skips_par_code == {}
+
+    def test_invalid_date_produces_skip_with_correct_line_number(self):
+        """Header = ligne 1, donc la 1re ligne de données est la ligne 2."""
+        csv_bytes = (
+            _HEADER + "\nabc;B;FR;31/02/2025;positive;P;4;S;C;0;"
+            "0;0;0;0;0;0;0;0;0;;;\n"
+        ).encode("utf-8-sig")
+        df, _ = parse_csv(csv_bytes)
+        rows, skip_details, skips_par_code = normalize_batch(df, "mensuel")
+        assert rows == []
+        assert len(skip_details) == 1
+        assert skip_details[0]["ligne"] == 2
+        assert skip_details[0]["code"] == "DATE_INVALIDE"
+        assert skips_par_code == {"DATE_INVALIDE": 1}
+
+    def test_mixed_file_counts_correctly(self):
+        good_row = _ROW[0]
+        bad_row = (
+            "def;B;FR;not-a-date;positive;P;4;S;C;0;"
+            "0;0;0;0;0;0;0;0;0;;;"
+        )
+        csv_bytes = ("\n".join([_HEADER, good_row, bad_row]) + "\n").encode("utf-8-sig")
+        df, _ = parse_csv(csv_bytes)
+        rows, skip_details, skips_par_code = normalize_batch(df, "mensuel")
+        assert len(rows) == 1
+        assert len(skip_details) == 1
+        assert skip_details[0]["ligne"] == 3  # header=1, ligne1=2, ligne2=3
+        assert skips_par_code["DATE_INVALIDE"] == 1
+
+    def test_bad_lines_merged_with_code_ligne_malformee(self):
+        df, _ = parse_csv(VALID_CSV_BYTES)
+        bad_lines = [{
+            "ligne": None, "code": "LIGNE_MALFORMEE",
+            "raison": "test", "champ": None, "extrait": "x;y;z",
+        }]
+        rows, skip_details, skips_par_code = normalize_batch(df, "mensuel", bad_lines)
+        assert len(skip_details) == 1
+        assert skip_details[0]["code"] == "LIGNE_MALFORMEE"
+        assert skips_par_code == {"LIGNE_MALFORMEE": 1}
+
+    def test_extrait_truncated_to_200_chars(self):
+        long_value = "x" * 500
+        csv_bytes = (
+            _HEADER + f"\nabc;{long_value};FR;not-a-date;positive;P;4;S;C;0;"
+            "0;0;0;0;0;0;0;0;0;;;\n"
+        ).encode("utf-8-sig")
+        df, _ = parse_csv(csv_bytes)
+        _rows, skip_details, _codes = normalize_batch(df, "mensuel")
+        assert len(skip_details[0]["extrait"]) <= 200
+
+    def test_extrait_never_contains_full_verbatim(self):
+        """Spec §2.4 : ne jamais mettre le verbatim en clair dans l'extrait —
+        volumétrie et données personnelles. Chaque valeur est tronquée à 30."""
+        long_verbatim = "Ceci est un verbatim très long qui ne doit jamais apparaître en clair"
+        csv_bytes = (
+            _HEADER + f"\nabc;B;FR;not-a-date;positive;P;4;S;{long_verbatim};0;"
+            "0;0;0;0;0;0;0;0;0;;;\n"
+        ).encode("utf-8-sig")
+        df, _ = parse_csv(csv_bytes)
+        _rows, skip_details, _codes = normalize_batch(df, "mensuel")
+        assert long_verbatim not in skip_details[0]["extrait"]
+
+    def test_unknown_exception_gets_erreur_inconnue_code(self, monkeypatch):
+        import core.importer as importer_mod
+
+        def _boom(row, import_type, validation_rules=None):
+            raise RuntimeError("panne inattendue")
+
+        monkeypatch.setattr(importer_mod, "normalize_row", _boom)
+        df, _ = parse_csv(VALID_CSV_BYTES)
+        _rows, skip_details, skips_par_code = importer_mod.normalize_batch(df, "mensuel")
+        assert skip_details[0]["code"] == "ERREUR_INCONNUE"
+        assert skips_par_code == {"ERREUR_INCONNUE": 1}
 
 
 # ─── import_batch ─────────────────────────────────────────────────────────────
@@ -291,7 +508,11 @@ class TestImportBatch:
     def test_empty_rows_returns_zeros(self):
         conn, _ = _make_db_conn()
         result = import_batch(conn, [], "batch-uuid")
-        assert result == {"inserted": 0, "skipped": 0, "errors": []}
+        assert result == {
+            "inserted": 0, "duplicates": 0,
+            "duplicates_fichier": 0, "duplicates_base": 0,
+            "errors": [],
+        }
         conn.cursor.assert_not_called()
 
     def test_returns_inserted_count(self):
@@ -302,13 +523,29 @@ class TestImportBatch:
             result = import_batch(conn, rows, "uuid")
         assert result["inserted"] == 2
 
-    def test_returns_skipped_count(self):
+    def test_returns_duplicates_count(self):
         rows = [_make_row(i) for i in range(3)]
         conn, _ = _make_db_conn()
         with patch("core.importer.execute_values") as mock_ev:
             mock_ev.return_value = [("id1",), ("id2",)]
             result = import_batch(conn, rows, "uuid")
-        assert result["skipped"] == 1
+        assert result["duplicates"] == 1
+
+    def test_duplicates_within_file_detected_before_insert(self):
+        """3 lignes dont 2 partagent le même id (doublon interne au fichier) —
+        distingué d'un doublon déjà en base (spec §2.5 : Counter sur les id
+        avant l'INSERT)."""
+        rows = [_make_row(0), _make_row(0), _make_row(1)]
+        rows[1]["id"] = rows[0]["id"]  # doublon interne volontaire
+        conn, _ = _make_db_conn()
+        with patch("core.importer.execute_values") as mock_ev:
+            # Postgres n'insère qu'une fois par id : 2 id distincts insérés.
+            mock_ev.return_value = [(rows[0]["id"],), (rows[2]["id"],)]
+            result = import_batch(conn, rows, "uuid")
+        assert result["inserted"] == 2
+        assert result["duplicates"] == 1
+        assert result["duplicates_fichier"] == 1
+        assert result["duplicates_base"] == 0
 
     def test_no_errors_on_success(self):
         rows = [_make_row(i) for i in range(2)]
