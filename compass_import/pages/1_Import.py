@@ -12,6 +12,7 @@ Flux :
   Étape 4 — Résumé des métriques
 """
 
+import json
 import sys
 import time
 import uuid
@@ -24,6 +25,8 @@ import streamlit as st
 _ROOT = Path(__file__).parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
+
+from psycopg2.extras import Json
 
 from compass_ui.compass_ui import (
     alert,
@@ -38,10 +41,12 @@ from compass_ui.compass_ui import (
     steps,
     theme_toggle,
 )
+from compass_ui.skip_table import render_duplicates_note, render_skip_details
 from core.db import get_active_env, get_connection
 from core.hasher import file_hash as compute_file_hash
 from core.hasher import is_file_already_imported
 from core.importer import apply_known_categories, import_batch, normalize_batch, parse_csv
+from core.skip_report import build_error_detail
 
 # ── Configuration Streamlit ────────────────────────────────────────────────────
 st.set_page_config(
@@ -62,13 +67,15 @@ _DEFAULTS = {
     "file_bytes":         None,
     "file_name":          None,
     "df_parsed":          None,
+    "bad_lines":          None,   # list[dict] — lignes malformées (parse_csv)
     "step":               0,      # étape courante : 0-3
     "batch_id":           None,
     "import_done":        False,
     "import_stats":       None,   # dict résultats
     "import_duration_s":  0,
     "import_error":       None,
-    "skip_details":       None,   # list[{ligne, raison, extrait}]
+    "skip_details":       None,   # list[{ligne, code, raison, champ, extrait}]
+    "error_detail_payload": None, # enveloppe JSON envoyée à import_logs.error_detail
 }
 for k, v in _DEFAULTS.items():
     if k not in st.session_state:
@@ -84,12 +91,14 @@ def _reset_from_step(step: int) -> None:
         st.session_state.file_bytes  = None
         st.session_state.file_name   = None
         st.session_state.df_parsed   = None
+        st.session_state.bad_lines   = None
     if step <= 2:
         st.session_state.batch_id     = None
         st.session_state.import_done  = False
         st.session_state.import_stats = None
         st.session_state.import_error = None
         st.session_state.skip_details = None
+        st.session_state.error_detail_payload = None
     st.session_state.step = step
 
 
@@ -109,28 +118,37 @@ def _log_insert(conn, batch_id: str, file_hash_val: str, filename: str,
 
 
 def _log_update(conn, batch_id: str, stats: dict, status: str,
-                error_detail: str | None = None) -> None:
-    """Met à jour import_logs en fin d'import."""
+                error_detail: dict | None = None) -> None:
+    """Met à jour import_logs en fin d'import.
+
+    ``error_detail`` est l'enveloppe dict construite par
+    ``core.skip_report.build_error_detail`` (ou ``None``) — enveloppée dans
+    ``psycopg2.extras.Json`` avec ``ensure_ascii=False`` pour la colonne
+    JSONB, ce qui préserve les caractères accentués sans double sérialisation.
+    """
     with conn.cursor() as cur:
         cur.execute(
             """
             UPDATE import_logs SET
-                finished_at    = NOW(),
-                rows_inserted  = %s,
-                rows_skipped   = %s,
-                rows_matched   = %s,
-                rows_unmatched = %s,
-                status         = %s,
-                error_detail   = %s
+                finished_at     = NOW(),
+                rows_inserted   = %s,
+                rows_skipped    = %s,
+                rows_duplicates = %s,
+                rows_matched    = %s,
+                rows_unmatched  = %s,
+                status          = %s,
+                error_detail    = %s
             WHERE id = %s
             """,
             (
                 stats.get("inserted", 0),
                 stats.get("skipped", 0),
+                stats.get("duplicates", 0),
                 stats.get("matched", 0),
                 stats.get("unmatched", 0),
                 status,
-                error_detail,
+                Json(error_detail, dumps=lambda o: json.dumps(o, ensure_ascii=False))
+                    if error_detail is not None else None,
                 batch_id,
             ),
         )
@@ -270,8 +288,9 @@ steps(["Upload", "Validation", "Import", "Résumé"], current=1)
 # Parse le CSV (ou utilise le résultat mis en cache dans session_state)
 if st.session_state.df_parsed is None:
     try:
-        df = parse_csv(st.session_state.file_bytes)
+        df, bad_lines = parse_csv(st.session_state.file_bytes)
         st.session_state.df_parsed = df
+        st.session_state.bad_lines = bad_lines
     except ValueError as exc:
         alert(str(exc), type="error", title="Fichier invalide")
         st.stop()
@@ -336,8 +355,9 @@ if not st.session_state.import_done:
             unsafe_allow_html=True,
         )
 
-        rows, skip_details = normalize_batch(df, mode)
-        skipped_parse = len(skip_details)
+        bad_lines = st.session_state.bad_lines or []
+        rows, skip_details, skips_par_code = normalize_batch(df, mode, bad_lines)
+        total_skipped = len(skip_details)
 
         # ── Enrichissement avec les catégories connues ─────────────────────────
         try:
@@ -357,8 +377,8 @@ if not st.session_state.import_done:
 
         # ── INSERT par batches ─────────────────────────────────────────────────
         BATCH_SIZE = 1000
-        total_inserted = 0
-        total_skipped  = skipped_parse
+        total_inserted   = 0
+        total_duplicates = 0
         all_errors: list[str] = []
 
         t_start = time.time()
@@ -380,8 +400,8 @@ if not st.session_state.import_done:
                     )
 
                 result = import_batch(conn, chunk, batch_id)
-                total_inserted += result["inserted"]
-                total_skipped  += result["skipped"]
+                total_inserted   += result["inserted"]
+                total_duplicates += result["duplicates"]
                 all_errors.extend(result["errors"])
 
         t_elapsed = int(time.time() - t_start)
@@ -391,11 +411,12 @@ if not st.session_state.import_done:
         rows_matched   = total_inserted - rows_unmatched
 
         final_stats = {
-            "inserted":  total_inserted,
-            "skipped":   total_skipped,
-            "matched":   rows_matched,
-            "unmatched": rows_unmatched,
-            "errors":    all_errors,
+            "inserted":   total_inserted,
+            "skipped":    total_skipped,
+            "duplicates": total_duplicates,
+            "matched":    rows_matched,
+            "unmatched":  rows_unmatched,
+            "errors":     all_errors,
         }
 
         final_status = (
@@ -405,13 +426,8 @@ if not st.session_state.import_done:
         )
 
         # ── Construire error_detail JSON ───────────────────────────────────────
-        import json as _json
-        error_payload: dict = {}
-        if skip_details:
-            error_payload["skipped"] = skip_details
-        if all_errors:
-            error_payload["batch_errors"] = all_errors
-        error_detail_str = _json.dumps(error_payload, ensure_ascii=False) if error_payload else None
+        error_payload = build_error_detail(skip_details, all_errors)
+        st.session_state.error_detail_payload = error_payload
 
         # ── Mettre à jour le log ───────────────────────────────────────────────
         try:
@@ -421,7 +437,7 @@ if not st.session_state.import_done:
                     batch_id,
                     final_stats,
                     final_status,
-                    error_detail=error_detail_str,
+                    error_detail=error_payload,
                 )
         except Exception as exc:
             alert(f"Avertissement : impossible de finaliser le log : {exc}", type="warning")
@@ -442,9 +458,9 @@ if not st.session_state.import_done:
                 _log_update(
                     conn,
                     batch_id,
-                    {"inserted": 0, "skipped": 0, "matched": 0, "unmatched": 0},
+                    {"inserted": 0, "skipped": 0, "duplicates": 0, "matched": 0, "unmatched": 0},
                     "error",
-                    error_detail=str(exc),
+                    error_detail={"legacy_text": str(exc)},
                 )
         except Exception:
             pass
@@ -475,22 +491,19 @@ import_summary(
     rows_matched=stats.get("matched", 0),
     rows_unmatched=stats.get("unmatched", 0),
     duration_s=duration,
+    rows_duplicates=stats.get("duplicates", 0),
 )
 
-# Lignes ignorées à la normalisation
+render_duplicates_note(stats.get("duplicates", 0))
+
+# Lignes ignorées à la validation/normalisation — repliée par défaut : un
+# import réussi ne doit pas ressembler à un écran d'erreur (spec §2.7).
 skip_details = st.session_state.get("skip_details") or []
 if skip_details:
-    import pandas as _pd
-    with st.expander(f"⚠ {len(skip_details)} ligne(s) ignorée(s) — détail", expanded=False):
-        st.dataframe(
-            _pd.DataFrame(skip_details, columns=["ligne", "raison", "extrait"]),
-            use_container_width=True,
-            hide_index=True,
-            column_config={
-                "ligne":   st.column_config.NumberColumn("Ligne CSV", width="small"),
-                "raison":  st.column_config.TextColumn("Raison", width="large"),
-                "extrait": st.column_config.TextColumn("Extrait", width="large"),
-            },
+    with st.expander(f"Voir les lignes ignorées ({len(skip_details)})", expanded=False):
+        render_skip_details(
+            st.session_state.get("error_detail_payload"),
+            key_prefix=f"import_{st.session_state.batch_id}",
         )
 
 # Erreurs par lot

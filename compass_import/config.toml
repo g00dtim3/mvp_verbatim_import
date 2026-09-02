@@ -42,6 +42,7 @@ batch_size          = 1000      # Lignes par transaction INSERT
 max_file_size_mb    = 200       # Limite upload fichier CSV
 csv_separator       = ";"       # Séparateur CSV source API
 csv_encoding        = "utf-8-sig"  # UTF-8 avec BOM
+max_skip_details    = 500       # Plafond d'entrées détaillées dans error_detail.skips
 
 # Colonnes obligatoires dans le CSV source
 required_columns = [
@@ -69,6 +70,17 @@ attribute_columns = [
   "attribute_Safety",
   "attribute_Composition"
 ]
+
+# Règles de validation activables (lignes rejetées plutôt qu'importées avec
+# des champs vides). Toutes désactivées par défaut : on ne durcit que ce qui
+# est explicitement validé par le métier sur les chiffres d'une répétition
+# à blanc (cf. spec §2.3). GUID_MANQUANT n'a pas d'interrupteur ici : cette
+# règle n'est pertinente qu'au scénario A du hash (non actif, cf.
+# core/hasher.py) et n'est donc jamais levée en l'état.
+[import.validation]
+skip_si_verbatim_vide = false
+skip_si_brand_vide    = false
+skip_si_produit_vide  = false
 
 # ── Référentiel catégories ─────────────────────────────────────
 

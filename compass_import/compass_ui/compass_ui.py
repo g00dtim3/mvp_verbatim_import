@@ -207,6 +207,7 @@ def import_type_badge(type_: str) -> str:
     config = {
         "initial": ("Import initial", "cyan"),
         "mensuel": ("Import mensuel", "info"),
+        "reset":   ("⟲ Reprise à zéro", "warning"),
     }
     label, btype = config.get(type_, (type_, "gray"))
     return badge(label, btype)
@@ -414,11 +415,15 @@ def log_table(logs: list[dict]):
 
     rows_html = ""
     for i, log in enumerate(logs):
-        alt      = "alt" if i % 2 == 1 else ""
+        row_classes = []
+        if i % 2 == 1:
+            row_classes.append("alt")
+        if log.get("import_type") == "reset":
+            row_classes.append("reset")
         duration = f"{log.get('duration_s', 0)}s"
         # Compact — une ligne par <tr> pour éviter les lignes vides
         rows_html += (
-            f'<tr class="{alt}">'
+            f'<tr class="{" ".join(row_classes)}">'
             f'<td style="color:var(--c-text-2);white-space:nowrap">{log.get("started_at", "—")}</td>'
             f'<td style="font-weight:500">{log.get("filename", "—")}</td>'
             f"<td>{import_type_badge(log.get('import_type', ''))}</td>"
@@ -455,13 +460,21 @@ def import_summary(
     rows_matched: int,
     rows_unmatched: int,
     duration_s: int = 0,
+    rows_duplicates: int = 0,
 ):
     """
     Résumé post-import avec métriques colorées.
+
+    ``rows_skipped`` (validation, en amont de l'INSERT) et
+    ``rows_duplicates`` (``ON CONFLICT DO NOTHING``, en base ou interne au
+    fichier) sont deux réalités distinctes — cf. spec §2.5/§2.7 — affichées
+    comme deux tuiles séparées plutôt que fusionnées, pour ne pas reproduire
+    la confusion qui masquait l'origine des "doublons" avant cette refonte.
     """
     metric_row([
         {"label": "Verbatims insérés", "value": f"{rows_inserted:,}",  "color": "success"},
-        {"label": "Lignes skippées",   "value": f"{rows_skipped:,}",   "color": "warning" if rows_skipped else "gray"},
+        {"label": "Lignes ignorées",   "value": f"{rows_skipped:,}",   "color": "warning" if rows_skipped else "gray"},
+        {"label": "Doublons",          "value": f"{rows_duplicates:,}", "color": "gray"},
         {"label": "Avec catégorie",    "value": f"{rows_matched:,}",   "color": "blue"},
         {"label": "Sans catégorie",    "value": f"{rows_unmatched:,}", "color": "error" if rows_unmatched else "gray"},
     ])

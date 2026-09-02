@@ -79,6 +79,68 @@ class TestVerbatimHash:
         assert len(h) == 64
 
 
+# ─── verbatim_hash — scénario B (spec §1.3, §1.5) ─────────────────────────────
+
+class TestVerbatimHashScenarioB:
+    """Scénario B : hash composite élargi (brand, date, product, content,
+    country, source, rating) — cf. core/hasher.py. Ces tests figent le
+    comportement qui corrige les faux doublons multi-pays / multi-sources
+    identifiés en §1.1 de la spec, sans casser la détection des vrais
+    doublons (lignes strictement identiques)."""
+
+    def test_different_country_different_hash(self):
+        """Même avis syndiqué FR/BE : deux id distincts (avant le fix, un seul)."""
+        h_fr = verbatim_hash("brand", "2024-01-15", "product", "content", "FR", "Amazon", "4")
+        h_be = verbatim_hash("brand", "2024-01-15", "product", "content", "BE", "Amazon", "4")
+        assert h_fr != h_be
+
+    def test_different_source_different_hash(self):
+        """Même avis collecté Amazon + site marque : deux id distincts."""
+        h_amazon = verbatim_hash("brand", "2024-01-15", "product", "content", "FR", "Amazon", "4")
+        h_site   = verbatim_hash("brand", "2024-01-15", "product", "content", "FR", "Site marque", "4")
+        assert h_amazon != h_site
+
+    def test_different_rating_different_hash(self):
+        h1 = verbatim_hash("brand", "2024-01-15", "product", "content", "FR", "Amazon", "4")
+        h2 = verbatim_hash("brand", "2024-01-15", "product", "content", "FR", "Amazon", "5")
+        assert h1 != h2
+
+    def test_strictly_identical_rows_same_hash(self):
+        """Le vrai doublon (ligne strictement identique) doit rester détecté."""
+        h1 = verbatim_hash("brand", "2024-01-15", "product", "content", "FR", "Amazon", "4")
+        h2 = verbatim_hash("brand", "2024-01-15", "product", "content", "FR", "Amazon", "4")
+        assert h1 == h2
+
+    def test_missing_optional_fields_default_to_empty(self):
+        """Sans country/source/rating (ex. anciens appelants), le hash reste
+        calculable et déterministe — les nouveaux champs défaultent à ''."""
+        h1 = verbatim_hash("brand", "2024-01-15", "product", "content")
+        h2 = verbatim_hash("brand", "2024-01-15", "product", "content", "", "", "")
+        assert h1 == h2
+
+    def test_frozen_reference_values(self):
+        """Valeurs de référence figées — si ce test casse, c'est que le hash
+        a changé : la base doit être repurgée et l'import initial rejoué
+        (cf. scripts/reset_verbatims.py, spec §1.4)."""
+        reference = {
+            ("L'Oreal", "2024-06-15", "Hydra Pro", "Super produit", "FR", "Amazon", "4"):
+                "d6ca3b48c0c78cef680a723dcd02699f709f00bc62306f7a13b71b7a0e3846ed",
+            ("L'Oreal", "2024-06-15", "Hydra Pro", "Super produit", "BE", "Amazon", "4"):
+                "ae7fbc9cf4cdec3a1aeec53427c9ce34be082dfb457232d506f36459e9dacad3",
+            ("L'Oreal", "2024-06-15", "Hydra Pro", "", "FR", "Amazon", "5"):
+                "2965599682b7ac5cf7470aa927f5f635a90391457ee28ed39c9f411adf078fc0",
+        }
+        for args, expected in reference.items():
+            actual = verbatim_hash(*args)
+            assert actual == expected, (
+                f"verbatim_hash{args} = {actual!r}, attendu {expected!r} — "
+                "LE HASH A CHANGÉ : la base `verbatims` doit être repurgée "
+                "et l'import initial rejoué (scripts/reset_verbatims.py), "
+                "sans quoi les id déjà stockés ne correspondront plus aux "
+                "lignes qu'ils sont censés identifier."
+            )
+
+
 # ─── file_hash ────────────────────────────────────────────────────────────────
 
 class TestFileHash:

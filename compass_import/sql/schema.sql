@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS import_logs (
     id                      UUID            PRIMARY KEY DEFAULT gen_random_uuid(),
     file_hash               VARCHAR(64)     NOT NULL,   -- SHA-256 contenu fichier
     filename                VARCHAR(500)    NOT NULL,
-    import_type             VARCHAR(20)     NOT NULL CHECK (import_type IN ('initial','mensuel')),
+    import_type             VARCHAR(20)     NOT NULL CHECK (import_type IN ('initial','mensuel','reset')),
     started_at              TIMESTAMPTZ     NOT NULL DEFAULT NOW(),
     finished_at             TIMESTAMPTZ,
     rows_total              INTEGER         DEFAULT 0,
@@ -21,9 +21,10 @@ CREATE TABLE IF NOT EXISTS import_logs (
     rows_skipped            INTEGER         DEFAULT 0,
     rows_matched            INTEGER         DEFAULT 0,  -- catégorie connue à l'import
     rows_unmatched          INTEGER         DEFAULT 0,  -- catégorie inconnue
+    rows_duplicates         INTEGER         DEFAULT 0,  -- ON CONFLICT DO NOTHING (base ou fichier)
     status                  VARCHAR(20)     NOT NULL DEFAULT 'running'
                                             CHECK (status IN ('running','success','partial','error','duplicate')),
-    error_detail            TEXT
+    error_detail            JSONB
 );
 
 -- Unicité du hash fichier pour le contrôle doublon
@@ -183,7 +184,7 @@ ORDER BY nb_verbatims DESC;
 COMMENT ON TABLE verbatims              IS 'Verbatims clients importés depuis l''API Semantiweb';
 COMMENT ON TABLE categories_mapping     IS 'Correspondance (brand, product_name) → catégorie interne. Clé : brand || product_name.';
 COMMENT ON TABLE import_logs            IS 'Journal de tous les imports avec contrôle doublon par hash fichier';
-COMMENT ON COLUMN verbatims.id          IS 'SHA-256(brand + date + product_name + verbatim_content) — garantit l''unicité et l''idempotence';
+COMMENT ON COLUMN verbatims.id          IS 'SHA-256(brand + date + product_name + verbatim_content + country + source + rating) — scénario B, cf. core/hasher.py';
 COMMENT ON COLUMN verbatims.product_name IS 'Valeur exacte du champ product_name_SEMANTIWEB du CSV, renommé à l''import';
 COMMENT ON COLUMN verbatims.photo       IS 'NULL = non renseigné (import mensuel). true/false = renseigné (import initial ou matching)';
 COMMENT ON COLUMN import_logs.file_hash IS 'SHA-256 du contenu binaire du fichier CSV — utilisé pour bloquer les imports en doublon';

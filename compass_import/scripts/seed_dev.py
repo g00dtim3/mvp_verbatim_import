@@ -145,7 +145,7 @@ def seed_verbatims(conn, csv_path: Path) -> None:
     with open(csv_path, "rb") as f:
         raw = f.read()
 
-    df = parse_csv(raw)
+    df, _bad_lines = parse_csv(raw)
     batch_id = str(uuid.uuid4())
 
     # Créer le log d'import
@@ -164,11 +164,13 @@ def seed_verbatims(conn, csv_path: Path) -> None:
 
     # Normaliser et insérer
     rows = []
+    skipped_count = 0
     for _, row in df.iterrows():
         try:
             rows.append(normalize_row(row, "mensuel"))
         except Exception as exc:
             print(f"    ⚠ Ligne ignorée : {exc}")
+            skipped_count += 1
 
     result = import_batch(conn, rows, batch_id)
 
@@ -177,17 +179,19 @@ def seed_verbatims(conn, csv_path: Path) -> None:
         cur.execute(
             """
             UPDATE import_logs
-               SET finished_at   = NOW(),
-                   rows_inserted = %s,
-                   rows_skipped  = %s,
-                   rows_matched  = 0,
-                   rows_unmatched = %s,
-                   status        = %s
+               SET finished_at     = NOW(),
+                   rows_inserted   = %s,
+                   rows_skipped    = %s,
+                   rows_duplicates = %s,
+                   rows_matched    = 0,
+                   rows_unmatched  = %s,
+                   status          = %s
              WHERE id = %s
             """,
             (
                 result["inserted"],
-                result["skipped"],
+                skipped_count,
+                result["duplicates"],
                 result["inserted"],
                 "success" if not result["errors"] else "partial",
                 batch_id,
@@ -196,7 +200,7 @@ def seed_verbatims(conn, csv_path: Path) -> None:
     conn.commit()
 
     print(f"  ✓ Verbatims importés : {result['inserted']} insérés, "
-          f"{result['skipped']} skippés")
+          f"{result['duplicates']} doublons, {skipped_count} skippés")
 
 
 # ── Seed categories_mapping ───────────────────────────────────────────────────
