@@ -114,25 +114,39 @@ def file_hash(file_bytes: bytes) -> str:
 
 def is_file_already_imported(conn, file_hash_value: str) -> dict | None:
     """
-    Vérifie si un fichier a déjà été importé avec succès.
+    Retrouve la tentative d'import la plus récente pour ce fichier (même
+    ``file_hash``), quel qu'en soit le résultat.
 
-    Interroge ``import_logs`` à la recherche d'un enregistrement ayant le même
-    ``file_hash`` et dont le statut n'est ni ``'error'`` ni ``'duplicate'``
-    (c'est-à-dire un import réussi, partiel ou en cours).
+    Volontairement PAS filtré sur le statut : un import qui a échoué
+    (``status='error'``) doit être détectable pour que l'UI puisse le
+    signaler et inviter à réessayer, plutôt que de le rendre invisible et
+    laisser l'utilisateur repartir de zéro sans explication. Seul le
+    statut ``'duplicate'`` (jamais posé par le pipeline réel — présent
+    uniquement pour compatibilité avec d'anciennes données de test) est
+    exclu, sans quoi il se retrouverait à bloquer un nouvel essai sur la
+    base d'un enregistrement qui ne correspond à aucun import réel.
+
+    ``ORDER BY started_at DESC`` : s'il existe plusieurs tentatives pour ce
+    hash (ex. un premier essai en échec suivi d'un import réussi), c'est la
+    plus récente qui doit déterminer le message affiché à l'utilisateur.
 
     Args:
         conn: Connexion psycopg2 active (obtenue via ``core.db.get_connection``).
         file_hash_value: SHA-256 hexdigest du fichier à vérifier.
 
     Returns:
-        Dict avec les colonnes ``id``, ``filename``, ``started_at``, ``status``,
-        ``import_type`` si un doublon est détecté ; ``None`` sinon.
+        Dict avec ``id``, ``filename``, ``started_at``, ``finished_at``,
+        ``status``, ``import_type``, ``rows_inserted``, ``rows_total`` pour
+        la tentative la plus récente ; ``None`` si ce fichier n'a jamais
+        été soumis.
     """
     query = """
-        SELECT id, filename, started_at, status, import_type
+        SELECT id, filename, started_at, finished_at, status, import_type,
+               rows_inserted, rows_total
         FROM import_logs
         WHERE file_hash = %s
-          AND status NOT IN ('error', 'duplicate')
+          AND status != 'duplicate'
+        ORDER BY started_at DESC
         LIMIT 1
     """
     with conn.cursor() as cur:

@@ -29,6 +29,7 @@ import sys
 import time
 import uuid
 from collections import Counter
+from datetime import datetime, timezone
 from pathlib import Path
 
 import streamlit as st
@@ -43,12 +44,12 @@ from psycopg2.extras import Json
 
 from compass_ui.compass_ui import (
     alert,
-    duplicate_alert,
     hash_check,
     import_mode_toggle,
     import_summary,
     inject_css,
     page_header,
+    previous_import_alert,
     progress_block,
     sidebar_header,
     steps,
@@ -82,6 +83,14 @@ logger = logging.getLogger(__name__)
 
 # Nombre de lignes traitées entre deux logs de progression serveur.
 _PROGRESS_LOG_EVERY = 5000
+
+# Au-delà de ce délai depuis started_at, un import resté au statut
+# 'running' (jamais finalisé) est traité comme probablement interrompu
+# (crash) plutôt que réellement en cours — cf. contrôle anti-doublon de
+# l'étape 1. Heuristique approximative faute d'un timestamp de dernière
+# activité en base (started_at ne bouge pas pendant tout l'import) : à
+# ajuster si des imports légitimes dépassent régulièrement ce délai.
+_RUNNING_STALE_MINUTES = 15
 
 # ── Configuration Streamlit ────────────────────────────────────────────────────
 st.set_page_config(
@@ -308,19 +317,52 @@ if uploaded is not None:
         st.stop()
 
     if existing_log:
-        started = existing_log.get("started_at")
-        date_str = (
-            started.strftime("%d/%m/%Y à %H:%M")
-            if hasattr(started, "strftime")
-            else str(started)
-        )
-        hash_check("dupe")
-        duplicate_alert(
+        def _fmt(value) -> str:
+            return value.strftime("%d/%m/%Y à %H:%M") if hasattr(value, "strftime") else str(value or "")
+
+        status = existing_log.get("status")
+
+        # 'running' est ambigu : import réellement en cours, ou tentative
+        # interrompue (crash) qui n'a jamais atteint son statut final. Sans
+        # timestamp de dernière activité, on tranche sur l'ancienneté de
+        # started_at (cf. _RUNNING_STALE_MINUTES) plutôt que de bloquer
+        # indéfiniment un fichier sur la base d'un import mort.
+        if status == "running":
+            started_at_raw = existing_log.get("started_at")
+            is_stale = True
+            if getattr(started_at_raw, "tzinfo", None) is not None:
+                age = datetime.now(timezone.utc) - started_at_raw
+                is_stale = age.total_seconds() > _RUNNING_STALE_MINUTES * 60
+            if not is_stale:
+                hash_check("dupe-running")
+                alert(
+                    f"Un import de ce fichier a démarré le "
+                    f"<strong>{_fmt(started_at_raw)}</strong> et semble "
+                    f"encore actif (moins de {_RUNNING_STALE_MINUTES} min). "
+                    "Patientez qu'il se termine avant de relancer, pour "
+                    "éviter un double import concurrent.",
+                    type="warning",
+                    title=f"Import déjà en cours — {existing_log.get('filename', uploaded.name)}",
+                )
+                st.stop()
+            status = "running"  # traité comme "probablement interrompu" ci-dessous
+
+        blocking = previous_import_alert(
             filename=existing_log.get("filename", uploaded.name),
-            date=date_str,
+            status=status,
+            started_at=_fmt(existing_log.get("started_at")),
+            finished_at=_fmt(existing_log.get("finished_at")),
+            rows_inserted=existing_log.get("rows_inserted") or 0,
+            rows_total=existing_log.get("rows_total") or 0,
             batch_id=str(existing_log.get("id", "")),
         )
-        st.stop()
+
+        if blocking:
+            hash_check("dupe-success")
+            st.stop()
+        else:
+            hash_check("dupe-issue")
+            st.session_state.step = max(st.session_state.step, 1)
     else:
         hash_check("ok")
         st.session_state.step = max(st.session_state.step, 1)

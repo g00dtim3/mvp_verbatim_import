@@ -35,6 +35,32 @@ from compass_ui.compass_ui import (
 )
 from compass_ui.skip_table import render_skip_details
 from core.db import get_active_env, get_connection
+from core.skip_report import parse_error_detail
+
+# ── Résumé compact des erreurs (export CSV) ───────────────────────────────────
+
+def _error_summary(error_detail) -> str:
+    """
+    Résumé texte de ``error_detail``, une ligne par log — ex.
+    ``"DATE_INVALIDE:12;VERBATIM_VIDE:3;lots_en_erreur:1"``.
+
+    Sans ça, l'export CSV principal (une ligne par import) ne dit rien de
+    LA NATURE des erreurs : ``ignorees``/``doublons`` donnent des comptes,
+    mais pour savoir QUOI a été rejeté il fallait ouvrir chaque log un par
+    un dans l'interface. Ce résumé rend l'export auto-suffisant pour un
+    premier tri, sans remplacer le détail complet (téléchargeable ligne
+    par ligne depuis chaque expander, cf. render_skip_details).
+    """
+    parsed = parse_error_detail(error_detail)
+    parts = [f"{code}:{count}" for code, count in sorted(
+        parsed["skips_par_code"].items(), key=lambda kv: -kv[1]
+    )]
+    if parsed["batch_errors"]:
+        parts.append(f"lots_en_erreur:{len(parsed['batch_errors'])}")
+    if not parts and parsed["is_legacy"] and parsed["legacy_text"]:
+        return "format_legacy"
+    return ";".join(parts)
+
 
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -534,6 +560,7 @@ with tab4:
                     "rows_unmatched": r[10] or 0,
                     "status":         r[11] or "—",
                     "error_detail":   r[12],
+                    "error_summary":  _error_summary(r[12]),
                     "duration_s":     r[13] or 0,
                     "data_purged": (
                         (r[6] or 0) > 0 and str(r[0]) not in live_batch_ids
@@ -628,6 +655,12 @@ with tab4:
         st.markdown("")
 
         # ── Export CSV ────────────────────────────────────────────────────────
+        # "erreurs" résume LA NATURE des lignes ignorées (ex.
+        # "DATE_INVALIDE:12;VERBATIM_VIDE:3"), pas seulement leur nombre —
+        # sans cette colonne, l'export ne permettait pas de savoir quoi
+        # avait été rejeté sans rouvrir chaque log un par un dans l'app.
+        # Le détail ligne par ligne (numéro, extrait…) reste dans le
+        # téléchargement dédié de chaque expander (render_skip_details).
         df_logs = pd.DataFrame([
             {
                 "date":           lg["started_at"],
@@ -635,6 +668,7 @@ with tab4:
                 "type":           lg["import_type"],
                 "inseres":        lg["rows_inserted"],
                 "ignorees":       lg["rows_skipped"],
+                "erreurs":        lg["error_summary"],
                 "doublons":       lg["rows_duplicates"],
                 "matches":        lg["rows_matched"],
                 "sans_categorie": lg["rows_unmatched"],
