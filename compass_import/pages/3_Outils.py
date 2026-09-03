@@ -509,11 +509,37 @@ with tab3:
 # TAB 4 — Logs d'import
 # ═══════════════════════════════════════════════════════════════
 
+_T4_EXPECTED_KEYS = {
+    "id", "started_at", "filename", "import_type", "rows_total",
+    "rows_inserted", "rows_skipped", "rows_duplicates", "rows_matched",
+    "rows_unmatched", "status", "error_detail", "error_summary",
+    "duration_s", "data_purged",
+}
+
+
+def _is_cache_stale(cached, expected_keys: set) -> bool:
+    """
+    True si ``cached`` (la liste de dicts de ``t4_data``) existe mais ne
+    contient pas toutes les clés que le code actuel attend.
+
+    Un déploiement Streamlit Cloud n'invalide pas forcément les sessions de
+    navigateur déjà ouvertes : si ce PR ajoute un champ au dict mis en
+    cache (ex. "error_summary"), une session restée ouverte pendant le
+    déploiement garde un ``t4_data`` à l'ancienne forme, et le code mis à
+    jour plante avec un ``KeyError`` en le relisant — c'est exactement
+    l'incident constaté en production. Un simple ``is None`` ne détecte
+    pas ce cas : un cache présent mais obsolète passe au travers. Fonction
+    pure (aucun appel Streamlit) pour rester testable sans dépendre du
+    comportement de ``st.session_state`` hors d'un run réel.
+    """
+    return bool(cached) and not expected_keys.issubset(cached[0].keys())
+
+
 with tab4:
     st.markdown("#### Logs d'import")
 
     # ── Chargement ────────────────────────────────────────────────────────────
-    if st.session_state.t4_data is None:
+    if st.session_state.t4_data is None or _is_cache_stale(st.session_state.t4_data, _T4_EXPECTED_KEYS):
         try:
             with get_connection() as conn:
                 with conn.cursor() as cur:
@@ -663,18 +689,18 @@ with tab4:
         # téléchargement dédié de chaque expander (render_skip_details).
         df_logs = pd.DataFrame([
             {
-                "date":           lg["started_at"],
-                "fichier":        lg["filename"],
-                "type":           lg["import_type"],
-                "inseres":        lg["rows_inserted"],
-                "ignorees":       lg["rows_skipped"],
-                "erreurs":        lg["error_summary"],
-                "doublons":       lg["rows_duplicates"],
-                "matches":        lg["rows_matched"],
-                "sans_categorie": lg["rows_unmatched"],
-                "statut":         lg["status"],
-                "duree_s":        lg["duration_s"],
-                "batch_id":       lg["id"],
+                "date":           lg.get("started_at", "—"),
+                "fichier":        lg.get("filename", "—"),
+                "type":           lg.get("import_type", "—"),
+                "inseres":        lg.get("rows_inserted", 0),
+                "ignorees":       lg.get("rows_skipped", 0),
+                "erreurs":        lg.get("error_summary", ""),
+                "doublons":       lg.get("rows_duplicates", 0),
+                "matches":        lg.get("rows_matched", 0),
+                "sans_categorie": lg.get("rows_unmatched", 0),
+                "statut":         lg.get("status", "—"),
+                "duree_s":        lg.get("duration_s", 0),
+                "batch_id":       lg.get("id", "—"),
             }
             for lg in filtered
         ])
