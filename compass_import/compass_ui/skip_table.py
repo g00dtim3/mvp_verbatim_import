@@ -56,15 +56,11 @@ def render_skip_details(error_detail: dict | str | None, key_prefix: str) -> Non
     """
     parsed = parse_error_detail(error_detail)
 
-    if parsed["is_legacy"] and not parsed["skips"]:
+    if parsed["is_legacy"] and not parsed["skips"] and not parsed["batch_errors"]:
         if parsed["legacy_text"]:
             st.caption("Détail antérieur à la traçabilité par ligne (format libre) :")
             st.code(parsed["legacy_text"], language=None)
-        if parsed["batch_errors"]:
-            st.markdown("**Erreurs de lot :**")
-            for err in parsed["batch_errors"]:
-                st.code(err)
-        if not parsed["legacy_text"] and not parsed["batch_errors"]:
+        else:
             st.caption("Aucun détail exploitable pour cet import.")
         return
 
@@ -106,8 +102,21 @@ def render_skip_details(error_detail: dict | str | None, key_prefix: str) -> Non
             mime="text/csv",
             key=f"{key_prefix}_skip_download",
         )
-    elif parsed["is_legacy"]:
+    elif not parsed["batch_errors"]:
         st.caption("Aucune ligne ignorée détaillée pour cet import.")
+
+    # Erreurs de lot (échec d'un INSERT groupé, ex. coupure réseau vers la
+    # base) — affichées qu'il y ait ou non des skips ligne par ligne à côté.
+    # BUG CORRIGÉ : avant, un import n'ayant QUE des erreurs de lot (aucun
+    # skip de validation) ne remontait RIEN dans l'onglet Outils / Logs —
+    # ni ici (branche ignorée car is_legacy=False et skips=[]), ni ailleurs,
+    # car pages/3_Outils.py n'a pas d'autre source que error_detail pour un
+    # log historique (contrairement à pages/1_Import.py qui avait, en plus,
+    # son propre bloc redondant basé sur l'état de session en mémoire).
+    if parsed["batch_errors"]:
+        st.markdown("**Erreurs de lot :**")
+        for err in parsed["batch_errors"]:
+            st.code(err)
 
 
 def render_duplicates_note(rows_duplicates: int) -> None:

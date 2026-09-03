@@ -52,6 +52,37 @@ class TestBuildErrorDetail:
         payload = build_error_detail(skips, max_skip_details=1)
         assert payload["skips_par_code"] == {"DATE_INVALIDE": 3, "VERBATIM_VIDE": 2}
 
+    def test_streaming_overrides_used_when_provided(self):
+        """Cas d'usage pages/1_Import.py : l'appelant a déjà plafonné
+        skip_details en amont (accumulateur borné en mémoire pendant un
+        import streaming) et fournit le vrai total/la vraie répartition
+        séparément — build_error_detail ne doit pas recalculer depuis la
+        liste déjà tronquée (ce qui sous-compterait)."""
+        capped_details = [_skip(i) for i in range(3)]  # déjà plafonné à 3
+        payload = build_error_detail(
+            capped_details,
+            skips_total=10_000,
+            skips_par_code={"DATE_INVALIDE": 9_000, "VERBATIM_VIDE": 1_000},
+        )
+        assert payload["skips_total"] == 10_000
+        assert len(payload["skips"]) == 3  # le détail reste celui fourni
+        assert payload["skips_par_code"] == {"DATE_INVALIDE": 9_000, "VERBATIM_VIDE": 1_000}
+        assert payload["skips_tronque"] is True
+
+    def test_streaming_overrides_absent_falls_back_to_computed(self):
+        """Sans override, comportement identique à l'ancien (liste complète)."""
+        skips = [_skip(i) for i in range(3)]
+        payload = build_error_detail(skips)
+        assert payload["skips_total"] == 3
+        assert payload["skips_tronque"] is False
+
+    def test_skips_total_override_without_details_still_reports(self):
+        """Le detail peut être vide (rien conservé) tant que skips_total
+        indique qu'il y a bien eu des skips — ne doit pas retourner None."""
+        payload = build_error_detail([], skips_total=5, skips_par_code={"X": 5})
+        assert payload is not None
+        assert payload["skips_total"] == 5
+
     def test_batch_errors_included(self):
         payload = build_error_detail([], ["Erreur batch 1 : boom"])
         assert payload["batch_errors"] == ["Erreur batch 1 : boom"]
