@@ -19,7 +19,7 @@ from collections import Counter
 from datetime import date, datetime
 from io import BytesIO
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 import pandas as pd
 from psycopg2.extras import execute_values
@@ -98,6 +98,17 @@ def _load_config() -> dict:
             return tomllib.load(f)
     except FileNotFoundError:
         return {}
+
+
+def load_import_settings() -> dict:
+    """Sous-section ``[import]`` de ``config.toml`` (``batch_size``,
+    ``max_skip_details``, etc.), exposée aux appelants externes (pages,
+    scripts) qui ont besoin de ces valeurs sans dupliquer la lecture TOML —
+    ``core.skip_report`` a son propre chargeur pour ``max_skip_details``
+    (module indépendant, pas de dépendance circulaire vers ici), mais tout
+    le reste doit passer par cette fonction plutôt que relire
+    ``config.toml`` à la main."""
+    return _load_config().get("import", {})
 
 
 def _load_validation_rules(config: dict | None = None) -> dict[str, bool]:
@@ -229,6 +240,200 @@ def parse_csv(file_bytes: bytes) -> tuple[pd.DataFrame, list[dict]]:
         )
 
     return df, bad_lines
+
+
+# ─── estimate_row_count / preview_csv ─────────────────────────────────────────
+# Un import de fichier volumineux (ex. 189 824 lignes constatées en
+# production) faisait planter le process (OOM sur Streamlit Cloud) parce que
+# parse_csv() ci-dessus charge tout le fichier en DataFrame d'un coup, et
+# l'appelant construisait ensuite une liste Python de toutes les lignes
+# normalisées avant même de commencer les INSERT. Ces deux fonctions et
+# iter_csv_chunks() ci-dessous permettent à l'appelant (pages/1_Import.py)
+# de ne jamais matérialiser le fichier entier : preview_csv() pour l'aperçu
+# avant lancement, iter_csv_chunks() pour l'import lui-même.
+
+def estimate_row_count(file_bytes: bytes) -> int:
+    """
+    Estimation rapide du nombre de lignes de données (hors en-tête).
+
+    Comptage des sauts de ligne — O(1) mémoire, ne parse pas le CSV.
+    Approximatif si un champ contient un retour à la ligne entre guillemets
+    (rare dans les exports Semantiweb) : utilisé uniquement pour l'affichage
+    (aperçu, barre de progression), jamais pour une décision métier — le
+    compte exact est de toute façon accumulé au fil de l'import par
+    iter_csv_chunks().
+    """
+    if not file_bytes:
+        return 0
+    newline_count = file_bytes.count(b"\n")
+    if not file_bytes.endswith(b"\n"):
+        newline_count += 1  # dernière ligne sans saut de ligne final
+    return max(0, newline_count - 1)  # moins la ligne d'en-tête
+
+
+def preview_csv(file_bytes: bytes, n: int = 5) -> tuple[pd.DataFrame, int]:
+    """
+    Aperçu léger d'un CSV avant import : les ``n`` premières lignes et une
+    estimation du nombre total de lignes — sans jamais charger le fichier
+    entier en mémoire (contrairement à un ``parse_csv()`` complet juste
+    pour afficher un aperçu).
+
+    Valide aussi les colonnes obligatoires, via cette même lecture partielle
+    (l'en-tête est toujours inclus, quel que soit ``n``).
+
+    Args:
+        file_bytes: Contenu binaire du fichier CSV.
+        n: Nombre de lignes à charger pour l'aperçu (défaut 5).
+
+    Returns:
+        Tuple ``(head_df, estimated_total_rows)``.
+
+    Raises:
+        ValueError: Colonnes obligatoires manquantes, ou fichier illisible.
+    """
+    config = _load_config()
+    required_columns: list[str] = config.get("import", {}).get(
+        "required_columns", _DEFAULT_REQUIRED_COLUMNS
+    )
+
+    try:
+        head_df = pd.read_csv(
+            BytesIO(file_bytes),
+            sep=";",
+            encoding="utf-8-sig",
+            dtype=str,
+            keep_default_na=True,
+            nrows=n,
+        )
+    except Exception as exc:
+        raise ValueError(
+            f"Impossible de lire le fichier CSV.\n"
+            f"Vérifiez l'encodage (UTF-8 BOM) et le séparateur (;).\n"
+            f"Détail : {exc}"
+        ) from exc
+
+    missing = [c for c in required_columns if c not in head_df.columns]
+    if missing:
+        raise ValueError(
+            f"Colonnes obligatoires manquantes dans le fichier CSV : "
+            f"{', '.join(missing)}\n"
+            f"Colonnes trouvées : {', '.join(head_df.columns.tolist())}"
+        )
+
+    return head_df, estimate_row_count(file_bytes)
+
+
+# ─── iter_csv_chunks ───────────────────────────────────────────────────────────
+
+def iter_csv_chunks(
+    file_bytes: bytes, chunksize: int = 1000
+) -> tuple[Iterator[pd.DataFrame], list[dict]]:
+    """
+    Version streaming de ``parse_csv`` : lit le fichier par lots de
+    ``chunksize`` lignes au lieu de tout charger en mémoire d'un coup.
+
+    C'est LE correctif au crash mémoire constaté en production (fichier de
+    189 824 lignes, process tué par l'OS sans message d'erreur applicatif
+    après ~17 000 lignes traitées). L'appelant doit consommer entièrement
+    l'itérateur retourné chunk par chunk, traiter+insérer chaque chunk, PUIS
+    le laisser sortir de portée avant de passer au suivant — ne jamais
+    accumuler les chunks dans une liste, sous peine de recréer exactement le
+    problème que cette fonction corrige.
+
+    Toujours lu avec ``engine="python"`` (seul moteur pandas acceptant un
+    callback ``on_bad_lines``, nécessaire pour capturer les lignes malformées
+    sans interrompre tout l'import) — contrairement à ``parse_csv`` qui
+    tente d'abord le moteur C. Ce n'est pas transposable ici : le moteur C
+    échouerait au milieu du flux, sans moyen de reprendre la lecture en
+    mode Python à l'octet où elle s'est arrêtée sans tout relire depuis le
+    début. Le moteur Python est plus lent mais le débit reste largement
+    suffisant face au coût des allers-retours réseau vers la base, qui
+    dominent le temps total d'un import.
+
+    Args:
+        file_bytes: Contenu binaire du fichier CSV.
+        chunksize: Nombre de lignes par chunk (défaut 1000 — aligné sur
+            ``config.toml [import].batch_size`` par convention, mais les
+            deux valeurs sont indépendantes).
+
+    Returns:
+        Tuple ``(chunks, bad_lines)`` :
+          - ``chunks`` : générateur de DataFrames de ``chunksize`` lignes
+            (le dernier peut être plus court).
+          - ``bad_lines`` : liste vide au retour de l'appel, qui SE REMPLIT
+            progressivement pendant que ``chunks`` est consommé (le callback
+            pandas s'exécute pendant l'itération, pas avant). Ne lire son
+            contenu qu'après avoir épuisé complètement ``chunks``.
+
+    Raises:
+        ValueError: Colonnes obligatoires manquantes (vérifié immédiatement,
+            avant tout streaming), ou fichier totalement illisible.
+    """
+    config = _load_config()
+    required_columns: list[str] = config.get("import", {}).get(
+        "required_columns", _DEFAULT_REQUIRED_COLUMNS
+    )
+
+    # Vérification des colonnes obligatoires via une lecture d'en-tête
+    # seule (nrows=0) — coût mémoire négligeable, échoue vite si le fichier
+    # est invalide plutôt qu'après avoir déjà streamé une partie du contenu.
+    try:
+        header_df = pd.read_csv(
+            BytesIO(file_bytes), sep=";", encoding="utf-8-sig", nrows=0,
+        )
+    except Exception as exc:
+        raise ValueError(
+            f"Impossible de lire le fichier CSV.\n"
+            f"Vérifiez l'encodage (UTF-8 BOM) et le séparateur (;).\n"
+            f"Détail : {exc}"
+        ) from exc
+
+    missing = [c for c in required_columns if c not in header_df.columns]
+    if missing:
+        raise ValueError(
+            f"Colonnes obligatoires manquantes dans le fichier CSV : "
+            f"{', '.join(missing)}\n"
+            f"Colonnes trouvées : {', '.join(header_df.columns.tolist())}"
+        )
+    del header_df
+
+    bad_lines: list[dict] = []
+
+    def _collect_bad_line(bad_line: list[str]) -> None:
+        contenu = ";".join(str(v) for v in bad_line)
+        bad_lines.append({
+            "ligne":   None,
+            "code":    "LIGNE_MALFORMEE",
+            "raison": (
+                f"Ligne malformée : {len(bad_line)} champ(s) trouvé(s), "
+                "nombre incohérent avec l'en-tête du fichier."
+            ),
+            "champ":   None,
+            "extrait": contenu[:_EXTRAIT_MAX_LEN],
+        })
+
+    def _chunks() -> Iterator[pd.DataFrame]:
+        reader = pd.read_csv(
+            BytesIO(file_bytes),
+            sep=";",
+            encoding="utf-8-sig",
+            dtype=str,
+            keep_default_na=True,
+            engine="python",
+            on_bad_lines=_collect_bad_line,
+            chunksize=chunksize,
+        )
+        try:
+            for chunk in reader:
+                yield chunk
+        except Exception as exc:
+            raise ValueError(
+                f"Erreur de lecture en cours de fichier CSV (après un import "
+                f"partiel — les lignes déjà traitées restent en base).\n"
+                f"Détail : {exc}"
+            ) from exc
+
+    return _chunks(), bad_lines
 
 
 # ─── normalize_row ────────────────────────────────────────────────────────────

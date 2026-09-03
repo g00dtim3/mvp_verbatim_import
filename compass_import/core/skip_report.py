@@ -52,14 +52,21 @@ def build_error_detail(
     skip_details: list[dict],
     batch_errors: list[str] | None = None,
     max_skip_details: int | None = None,
+    skips_total: int | None = None,
+    skips_par_code: dict[str, int] | None = None,
 ) -> dict | None:
     """
     Construit l'enveloppe versionnée destinée à ``import_logs.error_detail``.
 
     Args:
-        skip_details: Liste complète des lignes ignorées (format
+        skip_details: Liste des lignes ignorées à détailler (format
             ``{ligne, code, raison, champ, extrait}``, sortie de
-            ``normalize_batch`` fusionnée aux ``bad_lines`` de ``parse_csv``).
+            ``normalize_batch`` fusionnée aux ``bad_lines`` de
+            ``parse_csv``/``iter_csv_chunks``). Pour un import en streaming
+            sur un gros fichier, l'appelant peut avoir déjà plafonné cette
+            liste en amont (cf. ``skips_total``/``skips_par_code``
+            ci-dessous) plutôt que de garder toutes les lignes en mémoire
+            pour les retronquer seulement ici.
         batch_errors: Messages d'erreur par lot échoué (sortie de
             ``import_batch``).
         max_skip_details: Plafond du nombre d'entrées ``skips`` conservées
@@ -68,24 +75,35 @@ def build_error_detail(
             volumineux et majoritairement invalide ne doit pas faire
             exploser la ligne de log — ``skips_total`` reste le compte
             réel, seul le détail est tronqué.
+        skips_total: Total réel de lignes ignorées, à fournir explicitement
+            quand ``skip_details`` est DÉJÀ une liste plafonnée (import
+            streaming) — sans ça, ``len(skip_details)`` sous-compterait le
+            vrai total puisque les entrées au-delà du plafond n'y sont
+            jamais ajoutées. ``None`` → calculé depuis ``len(skip_details)``
+            (cas normal, liste complète).
+        skips_par_code: Répartition par code déjà accumulée par l'appelant
+            (ex. un ``Counter`` mis à jour au fil du streaming, qui reste
+            exact même quand le détail complet n'est plus gardé en
+            mémoire). ``None`` → recalculée depuis ``skip_details``.
 
     Returns:
         Dict de l'enveloppe, ou ``None`` si rien à consigner (import sans
         skip ni erreur de lot) — ``error_detail`` reste alors ``NULL``.
     """
-    if not skip_details and not batch_errors:
+    if not skip_details and not batch_errors and not skips_total:
         return None
 
     limit = max_skip_details if max_skip_details is not None else _load_max_skip_details()
-    skips_total = len(skip_details)
+    total = skips_total if skips_total is not None else len(skip_details)
     truncated = skip_details[:limit]
+    codes = skips_par_code if skips_par_code is not None else _count_by_code(skip_details)
 
     return {
         "version":        ENVELOPE_VERSION,
         "skips":          truncated,
-        "skips_par_code": _count_by_code(skip_details),
-        "skips_total":    skips_total,
-        "skips_tronque":  skips_total > len(truncated),
+        "skips_par_code": codes,
+        "skips_total":    total,
+        "skips_tronque":  total > len(truncated),
         "batch_errors":   list(batch_errors or []),
     }
 

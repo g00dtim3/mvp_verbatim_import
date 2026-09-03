@@ -12,10 +12,14 @@ import pytest
 from core.importer import (
     RowValidationError,
     apply_known_categories,
+    estimate_row_count,
     import_batch,
+    iter_csv_chunks,
+    load_import_settings,
     normalize_batch,
     normalize_row,
     parse_csv,
+    preview_csv,
 )
 
 # ─── CSV de test ──────────────────────────────────────────────────────────────
@@ -721,3 +725,125 @@ class TestApplyKnownCategories:
         # Toutes les lignes enrichies
         for r in result:
             assert r["categorie_interne"] == "Body Care"
+
+
+# ─── Streaming (correctif crash mémoire) ──────────────────────────────────────
+# scripts/diag_hash.py n'est pas concerné : ces tests couvrent le correctif
+# du crash OOM constaté en production sur un import de 189 824 lignes,
+# cf. core/importer.estimate_row_count / preview_csv / iter_csv_chunks.
+
+def _make_large_csv(n_rows: int, *, bad_line_at: int | None = None) -> bytes:
+    """Construit un CSV synthétique de n_rows lignes de données, avec en
+    option une ligne malformée insérée à l'index donné (0-based)."""
+    lines = [_HEADER]
+    for i in range(n_rows):
+        row = (
+            f"g{i};Brand;FR;15/06/2024;positive;Product;4;Amazon;"
+            f"Contenu numero {i};1;"
+            "0;0;0;0;0;0;0;0;0;;;"
+        )
+        if bad_line_at is not None and i == bad_line_at:
+            row += ";champ;en;trop"
+        lines.append(row)
+    return ("\n".join(lines) + "\n").encode("utf-8-sig")
+
+
+class TestEstimateRowCount:
+    def test_matches_actual_row_count(self):
+        csv_bytes = _make_large_csv(250)
+        assert estimate_row_count(csv_bytes) == 250
+
+    def test_empty_bytes(self):
+        assert estimate_row_count(b"") == 0
+
+    def test_header_only(self):
+        assert estimate_row_count((_HEADER + "\n").encode("utf-8-sig")) == 0
+
+
+class TestPreviewCsv:
+    def test_returns_n_rows_and_estimate(self):
+        csv_bytes = _make_large_csv(500)
+        head_df, total = preview_csv(csv_bytes, n=5)
+        assert len(head_df) == 5
+        assert total == 500
+
+    def test_does_not_require_full_parse_for_missing_columns_error(self):
+        bad = "brand;country\nL'Oreal;FR\n".encode("utf-8-sig")
+        with pytest.raises(ValueError, match="Colonnes obligatoires manquantes"):
+            preview_csv(bad)
+
+    def test_smaller_file_than_n_still_works(self):
+        csv_bytes = _make_large_csv(2)
+        head_df, total = preview_csv(csv_bytes, n=5)
+        assert len(head_df) == 2
+        assert total == 2
+
+
+class TestIterCsvChunks:
+    def test_never_yields_more_than_chunksize_rows(self):
+        csv_bytes = _make_large_csv(2500)
+        chunks, _bad_lines = iter_csv_chunks(csv_bytes, chunksize=500)
+        sizes = [len(c) for c in chunks]
+        assert all(s <= 500 for s in sizes)
+        assert sum(sizes) == 2500
+
+    def test_total_rows_across_chunks_matches_input(self):
+        csv_bytes = _make_large_csv(1234)
+        chunks, _bad_lines = iter_csv_chunks(csv_bytes, chunksize=100)
+        assert sum(len(c) for c in chunks) == 1234
+
+    def test_bad_line_captured_not_lost(self):
+        # bad_line_at=150 remplace la ligne 150 par une version malformée :
+        # 299 lignes valides + 1 ligne capturée séparément dans bad_lines,
+        # aucune des 300 n'est silencieusement perdue.
+        csv_bytes = _make_large_csv(300, bad_line_at=150)
+        chunks, bad_lines = iter_csv_chunks(csv_bytes, chunksize=50)
+        total_good = sum(len(c) for c in chunks)
+        assert total_good == 299
+        assert len(bad_lines) == 1
+        assert bad_lines[0]["code"] == "LIGNE_MALFORMEE"
+
+    def test_missing_required_column_raises_before_streaming(self):
+        bad = "brand;country\nL'Oreal;FR\n".encode("utf-8-sig")
+        with pytest.raises(ValueError, match="Colonnes obligatoires manquantes"):
+            iter_csv_chunks(bad)
+
+    def test_chunks_are_dataframes(self):
+        csv_bytes = _make_large_csv(10)
+        chunks, _ = iter_csv_chunks(csv_bytes, chunksize=100)
+        chunk_list = list(chunks)
+        assert len(chunk_list) == 1
+        assert isinstance(chunk_list[0], pd.DataFrame)
+
+    def test_full_pipeline_normalize_and_import_per_chunk(self):
+        """Reproduit exactement l'enchaînement de pages/1_Import.py : chaque
+        chunk est normalisé puis inséré indépendamment, sans jamais
+        construire une liste de toutes les lignes du fichier."""
+        csv_bytes = _make_large_csv(150)
+        chunks, bad_lines = iter_csv_chunks(csv_bytes, chunksize=50)
+
+        conn, cur = _make_db_conn()
+        total_inserted = 0
+        n_chunks_seen = 0
+        with patch("core.importer.execute_values") as mock_ev:
+            def fake_insert(cur, sql, values, **kw):
+                return [(v[0],) for v in values]  # tout "inséré"
+            mock_ev.side_effect = fake_insert
+
+            for chunk_df in chunks:
+                assert len(chunk_df) <= 50  # jamais plus qu'un chunk en mémoire
+                rows, _skips, _codes = normalize_batch(chunk_df, "mensuel")
+                result = import_batch(conn, rows, "batch-uuid")
+                total_inserted += result["inserted"]
+                n_chunks_seen += 1
+
+        assert n_chunks_seen == 3
+        assert total_inserted == 150
+        assert bad_lines == []
+
+
+class TestLoadImportSettings:
+    def test_returns_import_section(self):
+        settings = load_import_settings()
+        assert "batch_size" in settings
+        assert isinstance(settings["batch_size"], int)
