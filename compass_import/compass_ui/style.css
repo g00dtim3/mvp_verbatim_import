@@ -716,9 +716,11 @@ hr {
   font-size: 12px;
   font-weight: 500;
 }
-.compass-hash-check.ok   { background: var(--c-success-bg); color: var(--c-success); }
-.compass-hash-check.dupe { background: var(--c-error-bg);   color: var(--c-error); }
-.compass-hash-check.idle { background: var(--c-surface-2);  color: var(--c-text-3); border: 1px solid var(--c-border); }
+.compass-hash-check.ok           { background: var(--c-success-bg); color: var(--c-success); }
+.compass-hash-check.dupe-success { background: var(--c-success-bg); color: var(--c-success); }
+.compass-hash-check.dupe-issue   { background: var(--c-warning-bg); color: var(--c-warning); }
+.compass-hash-check.dupe-running { background: var(--c-warning-bg); color: var(--c-warning); }
+.compass-hash-check.idle         { background: var(--c-surface-2);  color: var(--c-text-3); border: 1px solid var(--c-border); }
 
 /* ── Log table ────────────────────────────────────────────── */
 .compass-log-table {

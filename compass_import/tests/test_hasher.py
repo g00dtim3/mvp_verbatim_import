@@ -177,9 +177,15 @@ class TestFileHash:
 
 # ─── is_file_already_imported ─────────────────────────────────────────────────
 
+_DEFAULT_COLS = [
+    "id", "filename", "started_at", "finished_at", "status", "import_type",
+    "rows_inserted", "rows_total",
+]
+
+
 def _make_cursor(fetchone_result, col_names=None):
     """Crée un mock cursor psycopg2."""
-    cols = col_names or ["id", "filename", "started_at", "status", "import_type"]
+    cols = col_names or _DEFAULT_COLS
     cur = MagicMock()
     cur.description = [(c,) for c in cols]
     cur.fetchone.return_value = fetchone_result
@@ -203,7 +209,7 @@ class TestIsFileAlreadyImported:
 
     def test_returns_dict_when_found(self):
         from datetime import datetime
-        row = ("uuid-1", "file.csv", datetime(2024, 6, 1), "success", "mensuel")
+        row = ("uuid-1", "file.csv", datetime(2024, 6, 1), datetime(2024, 6, 1), "success", "mensuel", 100, 100)
         conn, _ = _make_conn(row)
         result = is_file_already_imported(conn, "abc123")
         assert result is not None
@@ -211,12 +217,24 @@ class TestIsFileAlreadyImported:
         assert result["status"] == "success"
         assert result["import_type"] == "mensuel"
         assert result["id"] == "uuid-1"
+        assert result["rows_inserted"] == 100
 
-    def test_keys_match_column_names(self):
-        row = ("uuid-1", "file.csv", None, "success", "mensuel")
+    def test_returns_dict_for_error_status(self):
+        """Contrairement à l'ancien comportement, un import en échec doit
+        être détecté — c'est ce qui permet à l'UI d'en informer l'utilisateur
+        plutôt que de le laisser réessayer dans le noir (spec UX doublon)."""
+        from datetime import datetime
+        row = ("uuid-2", "file.csv", datetime(2024, 6, 1), datetime(2024, 6, 1), "error", "mensuel", 0, 0)
         conn, _ = _make_conn(row)
         result = is_file_already_imported(conn, "abc123")
-        assert set(result.keys()) == {"id", "filename", "started_at", "status", "import_type"}
+        assert result is not None
+        assert result["status"] == "error"
+
+    def test_keys_match_column_names(self):
+        row = ("uuid-1", "file.csv", None, None, "success", "mensuel", 0, 0)
+        conn, _ = _make_conn(row)
+        result = is_file_already_imported(conn, "abc123")
+        assert set(result.keys()) == set(_DEFAULT_COLS)
 
     def test_hash_passed_as_query_param(self):
         conn, cur = _make_conn(None)
@@ -224,10 +242,19 @@ class TestIsFileAlreadyImported:
         args = cur.execute.call_args[0][1]
         assert "deadbeef00" in args
 
-    def test_query_excludes_error_and_duplicate_statuses(self):
+    def test_query_excludes_only_duplicate_status(self):
+        """'duplicate' reste exclu (statut jamais posé par le pipeline réel),
+        mais 'error' ne l'est plus — cf. test_returns_dict_for_error_status."""
         conn, cur = _make_conn(None)
         is_file_already_imported(conn, "abc")
         sql = cur.execute.call_args[0][0]
-        assert "error" in sql
         assert "duplicate" in sql
-        assert "NOT IN" in sql
+        assert "NOT IN" not in sql  # plus d'exclusion multi-statuts
+
+    def test_query_orders_by_started_at_desc(self):
+        """La tentative la plus récente doit déterminer le message affiché,
+        pas une ligne arbitraire parmi plusieurs pour le même file_hash."""
+        conn, cur = _make_conn(None)
+        is_file_already_imported(conn, "abc")
+        sql = cur.execute.call_args[0][0]
+        assert "ORDER BY started_at DESC" in sql

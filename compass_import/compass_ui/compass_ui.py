@@ -246,37 +246,131 @@ def alert(
     )
 
 
-def duplicate_alert(filename: str, date: str, batch_id: str = ""):
-    """Alerte spécifique doublon d'import."""
+def previous_import_alert(
+    filename: str,
+    status: str,
+    started_at: str,
+    finished_at: str = "",
+    rows_inserted: int = 0,
+    rows_total: int = 0,
+    batch_id: str = "",
+) -> bool:
+    """
+    Alerte affichée quand ce fichier (même hash) a déjà été soumis
+    auparavant. Le ton, la couleur et le texte dépendent du statut de
+    cette tentative précédente — un import réussi n'est pas un problème
+    à signaler en rouge, et un import en échec ne doit pas se contenter
+    de bloquer silencieusement sans expliquer quoi faire.
+
+    Args:
+        filename: Nom du fichier de la tentative précédente.
+        status: ``running`` | ``success`` | ``partial`` | ``error`` (valeur
+            de ``import_logs.status``).
+        started_at: Date/heure de démarrage, déjà formatée.
+        finished_at: Date/heure de fin, déjà formatée (``""`` si absente —
+            import jamais terminé).
+        rows_inserted: Lignes effectivement insérées lors de la tentative.
+        rows_total: Total de lignes du fichier (pour un import partiel).
+        batch_id: UUID du log, pour affichage court.
+
+    Returns:
+        ``True`` si l'import doit rester bloqué (nouvelle tentative
+        inutile — fichier déjà intégralement importé), ``False`` si
+        l'utilisateur doit pouvoir relancer l'import malgré cette alerte
+        (tentative précédente en échec, incomplète, ou probablement
+        interrompue).
+    """
     batch_str = f" (batch <code>{batch_id[:8]}…</code>)" if batch_id else ""
+    when = finished_at or started_at
+
+    if status == "success":
+        alert(
+            message=(
+                f"<strong>{rows_inserted:,}</strong> verbatim(s) déjà "
+                f"inséré(s) le <strong>{when}</strong>{batch_str}. Relancer "
+                "l'import réinsérerait les mêmes lignes pour rien — c'est "
+                "pour ça qu'il est bloqué, pas parce qu'il y a un problème."
+            ),
+            type="success",
+            title=f"✅ Ce fichier a déjà été importé avec succès — {filename}",
+        )
+        return True
+
+    if status == "partial":
+        alert(
+            message=(
+                f"<strong>{rows_inserted:,}</strong> / {rows_total:,} "
+                f"verbatim(s) insérés le <strong>{started_at}</strong>"
+                f"{batch_str} — l'import précédent ne s'est pas terminé "
+                "normalement (voir Outils → Logs d'import pour le détail). "
+                "Vous pouvez relancer l'import ci-dessous : les lignes déjà "
+                "en base ne seront pas dupliquées."
+            ),
+            type="warning",
+            title=f"Import précédent incomplet — {filename}",
+        )
+        return False
+
+    if status == "error":
+        alert(
+            message=(
+                f"La tentative du <strong>{started_at}</strong>{batch_str} "
+                "a échoué avant d'aboutir. Consultez "
+                "<strong>Outils → Logs d'import</strong> pour le détail, "
+                "puis relancez l'import ci-dessous — rien ne vous en empêche."
+            ),
+            type="error",
+            title=f"L'import précédent de ce fichier a échoué — {filename}",
+        )
+        return False
+
+    # status == "running" : soit un import est réellement en cours, soit un
+    # précédent essai a été interrompu (crash) sans jamais se finaliser —
+    # l'appelant tranche selon l'ancienneté de started_at (cf. pages/1_Import.py)
+    # et n'appelle cette fonction que pour le cas "probablement interrompu".
     alert(
         message=(
-            f"Ce fichier a déjà été importé le <strong>{date}</strong>"
-            f"{batch_str}. L'import est bloqué."
+            f"Un import de ce fichier a démarré le <strong>{started_at}</strong>"
+            f"{batch_str} et n'est jamais arrivé à son terme (crash probable — "
+            "voir Outils → Logs d'import). Vous pouvez relancer l'import "
+            "ci-dessous."
         ),
-        type="duplicate",
-        title=f"Fichier déjà importé — {filename}",
+        type="warning",
+        title=f"Import précédent inachevé — {filename}",
     )
+    return False
 
 
 # ─── Hash check ─────────────────────────────────────────────────────────────────
 
 def hash_check(
-    status: Literal["ok", "dupe", "idle"],
+    status: Literal["ok", "dupe-success", "dupe-issue", "dupe-running", "idle"],
     detail: str = "",
 ):
     """
     Indicateur de contrôle hash fichier.
 
     Args:
-        status: "ok" = nouveau fichier | "dupe" = doublon | "idle" = en attente
+        status: "ok" = nouveau fichier | "dupe-success" = déjà importé avec
+            succès (bloquant) | "dupe-issue" = tentative précédente en échec
+            ou incomplète (non bloquant, nouvel essai possible) |
+            "dupe-running" = import déjà en cours pour ce fichier (bloquant,
+            temporaire) | "idle" = en attente
         detail: Texte complémentaire (ex: date du premier import)
     """
-    icons  = {"ok": "✓", "dupe": "⊘", "idle": "○"}
+    icons  = {
+        "ok":           "✓",
+        "dupe-success": "✓",
+        "dupe-issue":   "⚠",
+        "dupe-running": "↻",
+        "idle":         "○",
+    }
     labels = {
-        "ok":   "Fichier nouveau — import autorisé",
-        "dupe": "Fichier déjà importé — import bloqué",
-        "idle": "En attente d'un fichier…",
+        "ok":           "Fichier nouveau — import autorisé",
+        "dupe-success": "Déjà importé avec succès",
+        "dupe-issue":   "Tentative précédente incomplète — nouvel essai possible",
+        "dupe-running": "Import déjà en cours pour ce fichier",
+        "idle":         "En attente d'un fichier…",
     }
     icon  = icons[status]
     label = detail or labels[status]
