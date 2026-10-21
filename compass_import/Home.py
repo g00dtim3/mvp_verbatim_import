@@ -25,6 +25,7 @@ from compass_ui.compass_ui import (
     sidebar_header,
     theme_toggle,
 )
+from auth import exiger_mot_de_passe
 from core.db import get_active_env, get_connection, test_connection
 
 # ── Page config ───────────────────────────────────────────────────────────────
@@ -33,6 +34,7 @@ st.set_page_config(
     page_icon="📊",
     layout="wide",
 )
+exiger_mot_de_passe()  # la page s'arrête ici tant que le mot de passe n'est pas saisi
 
 inject_css()
 theme_toggle()
