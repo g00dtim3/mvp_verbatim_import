@@ -67,6 +67,7 @@ from core.importer import (
     normalize_batch,
     preview_csv,
 )
+from auth import exiger_mot_de_passe
 from core.skip_report import build_error_detail
 
 # ── Logging serveur ────────────────────────────────────────────────────────────
@@ -98,6 +99,7 @@ st.set_page_config(
     page_icon="📥",
     layout="wide",
 )
+exiger_mot_de_passe()  # la page s'arrête ici tant que le mot de passe n'est pas saisi
 
 # ── Design system ──────────────────────────────────────────────────────────────
 inject_css()

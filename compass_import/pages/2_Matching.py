@@ -40,6 +40,7 @@ from core.matcher import (
     get_unmatched_products,
     validate_matching_xls,
 )
+from auth import exiger_mot_de_passe
 from core.referentiel import load_referentiel
 
 # ── Page config ───────────────────────────────────────────────────────────────
@@ -48,6 +49,7 @@ st.set_page_config(
     page_icon="🏷",
     layout="wide",
 )
+exiger_mot_de_passe()  # la page s'arrête ici tant que le mot de passe n'est pas saisi
 
 inject_css()
 theme_toggle()

@@ -35,6 +35,7 @@ from compass_ui.compass_ui import (
 )
 from compass_ui.skip_table import render_skip_details
 from core.db import get_active_env, get_connection
+from auth import exiger_mot_de_passe
 from core.skip_report import parse_error_detail
 
 # ── Résumé compact des erreurs (export CSV) ───────────────────────────────────
@@ -68,6 +69,7 @@ st.set_page_config(
     page_icon="🔧",
     layout="wide",
 )
+exiger_mot_de_passe()  # la page s'arrête ici tant que le mot de passe n'est pas saisi
 
 inject_css()
 theme_toggle()

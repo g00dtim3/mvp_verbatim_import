@@ -27,6 +27,7 @@ cette régression sans faux positif.
 import importlib.util
 import sys
 from pathlib import Path
+from unittest import mock
 
 _ROOT = Path(__file__).parent.parent
 _PAGE_PATH = _ROOT / "pages" / "3_Outils.py"
@@ -38,10 +39,15 @@ def _load_outils_module():
     """Charge pages/3_Outils.py pour en extraire les constantes/fonctions
     pures (_T4_EXPECTED_KEYS, _is_cache_stale) — n'exerce PAS le flux
     contrôlé par Streamlit (session_state, st.stop()), qui ne se comporte
-    pas fidèlement hors d'un run réel."""
+    pas fidèlement hors d'un run réel.
+
+    L'écran de mot de passe (auth.exiger_mot_de_passe, lot 0) est neutralisé
+    pendant le chargement : hors run réel, son st.form resterait ouvert et
+    perturberait les tests Streamlit suivants (ex. test_skip_table)."""
     spec = importlib.util.spec_from_file_location("outils_page_under_test", _PAGE_PATH)
     module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    with mock.patch("auth.exiger_mot_de_passe", lambda: None):
+        spec.loader.exec_module(module)
     return module
 
 

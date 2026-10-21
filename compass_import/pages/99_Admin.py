@@ -4,7 +4,7 @@ pages/99_Admin.py
 Compass · Consumer Voice — Import Pipeline
 Page d'administration — initialisation de la base de données.
 
-Accessible uniquement en connaissant l'URL directe.
+Protégée par le mot de passe commun (auth.py), comme les autres pages.
 Non listée dans la navigation principale.
 """
 
@@ -17,8 +17,11 @@ _ROOT = Path(__file__).parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
+from auth import exiger_mot_de_passe
+
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(page_title="Admin — Compass", layout="centered")
+exiger_mot_de_passe()  # la page s'arrête ici tant que le mot de passe n'est pas saisi
 
 from compass_ui.compass_ui import inject_css, sidebar_header
 inject_css()
