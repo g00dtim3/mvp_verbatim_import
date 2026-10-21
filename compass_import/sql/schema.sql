@@ -24,7 +24,8 @@ CREATE TABLE IF NOT EXISTS import_logs (
     rows_duplicates         INTEGER         DEFAULT 0,  -- ON CONFLICT DO NOTHING (base ou fichier)
     status                  VARCHAR(20)     NOT NULL DEFAULT 'running'
                                             CHECK (status IN ('running','success','partial','error','duplicate')),
-    error_detail            JSONB
+    error_detail            JSONB,
+    source_export_id        TEXT            -- export api-explorer d'origine (migration 0002), NULL si dépôt manuel
 );
 
 -- Unicité du hash fichier pour le contrôle doublon
@@ -38,7 +39,7 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_import_logs_file_hash
 CREATE TABLE IF NOT EXISTS verbatims (
     -- Identifiant unique : SHA-256 de brand+date+product_name+verbatim_content
     id                      TEXT            PRIMARY KEY,
-    guid                    VARCHAR(255)    UNIQUE,         -- identifiant source du CSV (champ "guid")
+    guid                    VARCHAR(255),                   -- identifiant source du CSV (champ "guid") — PAS unique : régénéré à chaque export (migration 0003)
 
     -- Champs source CSV
     brand                   VARCHAR(255)    NOT NULL,
@@ -88,6 +89,13 @@ CREATE TABLE IF NOT EXISTS categories_mapping (
 );
 
 -- ── Index verbatims ───────────────────────────────────────────
+CREATE INDEX IF NOT EXISTS idx_verbatims_guid
+    ON verbatims (guid);
+
+CREATE INDEX IF NOT EXISTS idx_import_logs_source_export_id
+    ON import_logs (source_export_id)
+    WHERE source_export_id IS NOT NULL;
+
 CREATE INDEX IF NOT EXISTS idx_verbatims_product_name
     ON verbatims (product_name);
 
@@ -186,7 +194,7 @@ COMMENT ON TABLE verbatims              IS 'Verbatims clients importés depuis l
 COMMENT ON TABLE categories_mapping     IS 'Correspondance (brand, product_name) → catégorie interne. Clé : brand || product_name.';
 COMMENT ON TABLE import_logs            IS 'Journal de tous les imports avec contrôle doublon par hash fichier';
 COMMENT ON COLUMN verbatims.id          IS 'SHA-256(brand + date + product_name + verbatim_content + country + source + rating) — scénario B, cf. core/hasher.py';
-COMMENT ON COLUMN verbatims.guid IS 'Identifiant unique fourni par la source (champ guid du CSV), distinct de id (hash calculé)';
+COMMENT ON COLUMN verbatims.guid IS 'Identifiant Semantiweb fourni par la source (champ guid du CSV) — non unique (régénéré à chaque export), distinct de id (hash calculé)';
 COMMENT ON COLUMN verbatims.product_name IS 'Valeur exacte du champ product_name_SEMANTIWEB du CSV, renommé à l''import';
 COMMENT ON COLUMN verbatims.photo       IS 'NULL = non renseigné (import mensuel). true/false = renseigné (import initial ou matching)';
 COMMENT ON COLUMN import_logs.file_hash IS 'SHA-256 du contenu binaire du fichier CSV — utilisé pour bloquer les imports en doublon';

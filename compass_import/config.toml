@@ -44,6 +44,10 @@ csv_separator       = ";"       # Séparateur CSV source API
 csv_encoding        = "utf-8-sig"  # UTF-8 avec BOM
 max_skip_details    = 500       # Plafond d'entrées détaillées dans error_detail.skips
 
+# En-têtes acceptés sous une autre casse, renommés à la lecture (lot 1B).
+# Liste fermée : le format plat d'api-explorer écrit "Sampling".
+alias_colonnes = { Sampling = "sampling" }
+
 # Colonnes obligatoires dans le CSV source
 required_columns = [
   "guid",
