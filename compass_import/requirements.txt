@@ -11,6 +11,9 @@ psycopg2-binary>=2.9.9
 pandas>=2.2.0
 openpyxl>=3.1.2          # Génération XLS matching avec menus déroulants
 
+# ── Lecture des exports api-explorer (Supabase Storage) ───────
+requests>=2.31.0
+
 # ── Configuration ─────────────────────────────────────────────
 python-dotenv>=1.0.0
 tomli>=2.0.1              # Lecture config.toml (Python < 3.11)

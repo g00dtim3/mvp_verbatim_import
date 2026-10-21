@@ -23,9 +23,11 @@ Flux :
   `import_logs` exploitable au lieu d'un enregistrement bloqué à zéro.
 """
 
+import html
 import json
 import logging
 import sys
+import tempfile
 import time
 import uuid
 from collections import Counter
@@ -40,6 +42,7 @@ _ROOT = Path(__file__).parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
+import psycopg2
 from psycopg2.extras import Json
 
 from compass_ui.compass_ui import (
@@ -57,6 +60,12 @@ from compass_ui.compass_ui import (
 )
 from compass_ui.skip_table import render_duplicates_note, render_skip_details
 from core.db import get_active_env, get_connection
+from core.exports_source import (
+    ExportSourceError,
+    lister_exports,
+    nettoyer_dossier_temp,
+    telecharger,
+)
 from core.hasher import file_hash as compute_file_hash
 from core.hasher import is_file_already_imported
 from core.importer import (
@@ -110,8 +119,13 @@ sidebar_header()
 _DEFAULTS = {
     "import_mode":        None,   # "initial" | "mensuel"
     "file_hash":          None,
-    "file_bytes":         None,
+    "file_bytes":         None,   # dépôt manuel : octets du fichier
     "file_name":          None,
+    "source":             None,   # "export" | "upload"
+    "export_choisi":      None,   # export_id sélectionné (source "export")
+    "file_path":          None,   # source "export" : fichier temporaire vérifié
+    "source_export_id":   None,   # → import_logs.source_export_id
+    "rows_count_exact":   None,   # source "export" : bulk_export.files.rows_count
     "preview_df":         None,   # DataFrame léger (n premières lignes seulement)
     "preview_total_rows": 0,      # estimation — jamais un chargement complet
     "step":               0,      # étape courante : 0-3
@@ -130,12 +144,24 @@ for k, v in _DEFAULTS.items():
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────
 
+def _supprimer_fichier_temp() -> None:
+    """Supprime le fichier temporaire d'un export téléchargé (≈ 0,5 Go pour
+    un gros export) dès qu'il n'est plus utile."""
+    chemin = st.session_state.get("file_path")
+    if chemin:
+        Path(chemin).unlink(missing_ok=True)
+    st.session_state.file_path = None
+
+
 def _reset_from_step(step: int) -> None:
     """Réinitialise l'état à partir d'une étape donnée."""
     if step <= 1:
+        _supprimer_fichier_temp()
         st.session_state.file_hash   = None
         st.session_state.file_bytes  = None
         st.session_state.file_name   = None
+        st.session_state.source_export_id = None
+        st.session_state.rows_count_exact = None
         st.session_state.preview_df         = None
         st.session_state.preview_total_rows = 0
     if step <= 2:
@@ -149,17 +175,42 @@ def _reset_from_step(step: int) -> None:
 
 
 def _log_insert(conn, batch_id: str, file_hash_val: str, filename: str,
-                import_type: str, rows_total: int) -> None:
-    """Crée l'enregistrement import_logs au début de l'import."""
+                import_type: str, rows_total: int,
+                source_export_id: str | None = None) -> None:
+    """Crée l'enregistrement import_logs au début de l'import.
+
+    ``source_export_id`` (import depuis un export api-explorer) n'est écrit
+    que s'il est fourni : le dépôt manuel fonctionne donc même avant la
+    migration 0002."""
     with conn.cursor() as cur:
-        cur.execute(
-            """
-            INSERT INTO import_logs
-                (id, file_hash, filename, import_type, rows_total, status)
-            VALUES (%s, %s, %s, %s, %s, 'running')
-            """,
-            (batch_id, file_hash_val, filename, import_type, rows_total),
-        )
+        if source_export_id is None:
+            cur.execute(
+                """
+                INSERT INTO import_logs
+                    (id, file_hash, filename, import_type, rows_total, status)
+                VALUES (%s, %s, %s, %s, %s, 'running')
+                """,
+                (batch_id, file_hash_val, filename, import_type, rows_total),
+            )
+        else:
+            try:
+                cur.execute(
+                    """
+                    INSERT INTO import_logs
+                        (id, file_hash, filename, import_type, rows_total, status,
+                         source_export_id)
+                    VALUES (%s, %s, %s, %s, %s, 'running', %s)
+                    """,
+                    (batch_id, file_hash_val, filename, import_type, rows_total,
+                     source_export_id),
+                )
+            except psycopg2.errors.UndefinedColumn:
+                conn.rollback()
+                raise RuntimeError(
+                    "Colonne import_logs.source_export_id absente : exécutez "
+                    "sql/migrations/0002_source_export.sql dans le SQL Editor de "
+                    "Supabase avant d'importer depuis un export."
+                ) from None
     conn.commit()
 
 
@@ -292,25 +343,29 @@ st.divider()
 
 st.markdown("### 1 — Fichier CSV")
 
-uploaded = st.file_uploader(
-    "Déposer le fichier CSV Semantiweb",
-    type=["csv"],
-    help="Encodage UTF-8 BOM, séparateur point-virgule (;)",
-    key="csv_uploader",
+_SOURCE_EXPORT = "Depuis un export validé (recommandé)"
+_SOURCE_UPLOAD = "Déposer un fichier CSV"
+
+_choix_source = st.radio(
+    "Source du fichier",
+    [_SOURCE_EXPORT, _SOURCE_UPLOAD],
+    horizontal=True,
+    key="source_choice",
 )
+_source = "export" if _choix_source == _SOURCE_EXPORT else "upload"
+if _source != st.session_state.source:
+    _reset_from_step(1)
+    st.session_state.export_choisi = None
+    st.session_state.source = _source
 
-if uploaded is not None:
-    file_bytes = uploaded.read()
-    fhash = compute_file_hash(file_bytes)
 
-    # Nouveau fichier (ou changement de fichier)
-    if fhash != st.session_state.file_hash:
-        _reset_from_step(1)
-        st.session_state.file_hash  = fhash
-        st.session_state.file_bytes = file_bytes
-        st.session_state.file_name  = uploaded.name
+def _fmt(value) -> str:
+    return value.strftime("%d/%m/%Y à %H:%M") if hasattr(value, "strftime") else str(value or "")
 
-    # Contrôle anti-doublon
+
+def _controle_anti_doublon(fhash: str, nom: str) -> None:
+    """Contrôle anti-doublon (même ``file_hash``), commun aux deux sources.
+    Arrête la page (``st.stop()``) si l'import doit rester bloqué."""
     try:
         with get_connection() as conn:
             existing_log = is_file_already_imported(conn, fhash)
@@ -318,10 +373,13 @@ if uploaded is not None:
         alert(f"Erreur de connexion à la base : {exc}", type="error")
         st.stop()
 
-    if existing_log:
-        def _fmt(value) -> str:
-            return value.strftime("%d/%m/%Y à %H:%M") if hasattr(value, "strftime") else str(value or "")
+    # L'import que cette session vient elle-même de lancer n'est pas un
+    # doublon : sans ce garde-fou, le rechargement qui suit un import réussi
+    # trouvait ce même import en base et masquait le résumé (étape 4).
+    if existing_log and str(existing_log.get("id")) == str(st.session_state.batch_id or ""):
+        existing_log = None
 
+    if existing_log:
         status = existing_log.get("status")
 
         # 'running' est ambigu : import réellement en cours, ou tentative
@@ -344,13 +402,13 @@ if uploaded is not None:
                     "Patientez qu'il se termine avant de relancer, pour "
                     "éviter un double import concurrent.",
                     type="warning",
-                    title=f"Import déjà en cours — {existing_log.get('filename', uploaded.name)}",
+                    title=f"Import déjà en cours — {existing_log.get('filename', nom)}",
                 )
                 st.stop()
             status = "running"  # traité comme "probablement interrompu" ci-dessous
 
         blocking = previous_import_alert(
-            filename=existing_log.get("filename", uploaded.name),
+            filename=existing_log.get("filename", nom),
             status=status,
             started_at=_fmt(existing_log.get("started_at")),
             finished_at=_fmt(existing_log.get("finished_at")),
@@ -369,10 +427,128 @@ if uploaded is not None:
         hash_check("ok")
         st.session_state.step = max(st.session_state.step, 1)
 
+
+# ── Source 1 : export validé d'api-explorer (lot 1B) ──────────────────────────
+# Le fichier plat déjà validé est lu dans Supabase Storage : même fichier que
+# celui qu'on téléchargeait puis redéposait, sans l'étape manuelle. Le
+# contrôle anti-doublon se fait AVANT le téléchargement (l'empreinte est
+# connue d'avance via bulk_export.files.sha256), le téléchargement vérifie
+# ensuite que le fichier reçu a bien cette empreinte.
+
+def _choisir_export(export_id: str) -> None:
+    if export_id != st.session_state.export_choisi:
+        _reset_from_step(1)
+        st.session_state.export_choisi = export_id
+
+
+def _ligne_export(e) -> None:
+    deja = e.dernier_import is not None and e.dernier_import.get("status") == "success"
+    lignes = f"{e.rows_count:,} lignes" if e.rows_count is not None else "lignes : ?"
+    taille = f" · {e.size_bytes / 1_048_576:,.1f} Mo" if e.size_bytes else ""
+    style = ' style="opacity:.45"' if deja else ""
+    col_txt, col_btn = st.columns([5, 1])
+    with col_txt:
+        st.markdown(
+            f"<div{style}><strong>{html.escape(e.name)}</strong><br>"
+            f"<small>Terminé le {_fmt(e.finished_at)} · {lignes}{taille} · "
+            f"<code>{html.escape(e.export_id)}</code></small></div>",
+            unsafe_allow_html=True,
+        )
+        if deja:
+            st.caption(
+                f"✅ Déjà importé avec succès le {_fmt(e.dernier_import.get('finished_at') or e.dernier_import.get('started_at'))}. "
+                "Relancer l'import réinsérerait les mêmes lignes pour rien — "
+                "c'est pour ça qu'il est bloqué, pas parce qu'il y a un problème."
+            )
+    with col_btn:
+        st.button(
+            "Choisi" if e.export_id == st.session_state.export_choisi else "Choisir",
+            key=f"choisir_{e.export_id}",
+            disabled=deja,
+            type="primary" if e.export_id == st.session_state.export_choisi else "secondary",
+            on_click=_choisir_export,
+            args=(e.export_id,),
+        )
+
+
+if _source == "export":
+    try:
+        with get_connection() as conn:
+            _exports = lister_exports(conn)
+    except ExportSourceError as exc:
+        alert(str(exc), type="error", title="Exports indisponibles")
+        st.stop()
+    except Exception as exc:
+        alert(f"Erreur de connexion à la base : {exc}", type="error")
+        st.stop()
+
+    if not _exports:
+        hash_check("idle")
+        alert(
+            "Aucun export validé disponible. Il faut un export api-explorer "
+            "terminé (COMPLETED), produit avec le format « plat », dont les "
+            "fichiers n'ont pas expiré.",
+            type="info",
+        )
+        st.stop()
+
+    for _e in _exports:
+        _ligne_export(_e)
+
+    _choisi = next((e for e in _exports if e.export_id == st.session_state.export_choisi), None)
+    if _choisi is None:
+        hash_check("idle")
+        st.stop()
+
+    st.session_state.file_hash = _choisi.sha256
+    _controle_anti_doublon(_choisi.sha256, _choisi.filename_compass)
+
+    # Après l'import, le fichier temporaire est supprimé : ne pas le retélécharger.
+    if not st.session_state.import_done and not (
+        st.session_state.file_path and Path(st.session_state.file_path).exists()
+    ):
+        _dossier = Path(tempfile.gettempdir()) / "compass_exports"
+        _dossier.mkdir(exist_ok=True)
+        nettoyer_dossier_temp(_dossier)
+        _taille = f" ({_choisi.size_bytes / 1_048_576:,.0f} Mo)" if _choisi.size_bytes else ""
+        with st.spinner(f"Téléchargement et vérification de l'export{_taille}…"):
+            try:
+                _chemin = telecharger(_choisi.path, _choisi.sha256, _dossier)
+            except ExportSourceError as exc:
+                alert(str(exc), type="error", title="Téléchargement refusé")
+                st.stop()
+        logger.info("Export %s téléchargé et vérifié (%s)", _choisi.export_id, _chemin)
+        st.session_state.file_path        = str(_chemin)
+        st.session_state.file_name        = _choisi.filename_compass
+        st.session_state.source_export_id = _choisi.export_id
+        st.session_state.rows_count_exact = _choisi.rows_count
+
+# ── Source 2 : dépôt manuel d'un fichier CSV (parcours historique) ─────────────
 else:
-    hash_check("idle")
-    # Pas de fichier → on s'arrête ici
-    st.stop()
+    uploaded = st.file_uploader(
+        "Déposer le fichier CSV Semantiweb",
+        type=["csv"],
+        help="Encodage UTF-8 BOM, séparateur point-virgule (;)",
+        key="csv_uploader",
+    )
+
+    if uploaded is not None:
+        file_bytes = uploaded.read()
+        fhash = compute_file_hash(file_bytes)
+
+        # Nouveau fichier (ou changement de fichier)
+        if fhash != st.session_state.file_hash:
+            _reset_from_step(1)
+            st.session_state.file_hash  = fhash
+            st.session_state.file_bytes = file_bytes
+            st.session_state.file_name  = uploaded.name
+
+        _controle_anti_doublon(fhash, uploaded.name)
+
+    else:
+        hash_check("idle")
+        # Pas de fichier → on s'arrête ici
+        st.stop()
 
 st.divider()
 
@@ -389,7 +565,12 @@ steps(["Upload", "Validation", "Import", "Résumé"], current=1)
 # "Lancer l'import".
 if st.session_state.preview_df is None:
     try:
-        preview_df, total_rows_est = preview_csv(st.session_state.file_bytes, n=5)
+        _source_csv = st.session_state.file_path or st.session_state.file_bytes
+        preview_df, total_rows_est = preview_csv(_source_csv, n=5)
+        # Export validé : nombre de lignes exact connu d'api-explorer (le
+        # comptage des sauts de ligne surestime dès qu'un verbatim en contient).
+        if st.session_state.rows_count_exact is not None:
+            total_rows_est = st.session_state.rows_count_exact
         st.session_state.preview_df         = preview_df
         st.session_state.preview_total_rows = total_rows_est
     except ValueError as exc:
@@ -404,7 +585,11 @@ total_rows_est = st.session_state.preview_total_rows
 
 col_info, col_preview = st.columns([1, 3])
 with col_info:
-    st.metric("Lignes détectées (estimation)", f"{total_rows_est:,}")
+    st.metric(
+        "Lignes (export validé)" if st.session_state.rows_count_exact is not None
+        else "Lignes détectées (estimation)",
+        f"{total_rows_est:,}",
+    )
     st.metric("Colonnes", len(preview_df.columns))
     st.caption(f"Fichier : `{st.session_state.file_name}`")
 
@@ -464,7 +649,8 @@ if not st.session_state.import_done:
     mode           = st.session_state.import_mode
     fhash          = st.session_state.file_hash
     fname          = st.session_state.file_name
-    file_bytes     = st.session_state.file_bytes
+    source_csv     = st.session_state.file_path or st.session_state.file_bytes
+    source_export_id = st.session_state.source_export_id
     total_rows_est = st.session_state.preview_total_rows or 1  # évite /0 dans le %
 
     st.session_state.batch_id = batch_id
@@ -512,7 +698,8 @@ if not st.session_state.import_done:
     try:
         # ── Créer le log d'import (rows_total = estimation, corrigée au fil de l'eau) ──
         with get_connection() as conn:
-            _log_insert(conn, batch_id, fhash, fname, mode, total_rows_est)
+            _log_insert(conn, batch_id, fhash, fname, mode, total_rows_est,
+                        source_export_id)
 
         logger.info(
             "Import %s démarré — fichier=%s mode=%s ~%d ligne(s) (estimation)",
@@ -527,7 +714,7 @@ if not st.session_state.import_done:
         # import_batch, mais désormais aussi pour la normalisation et
         # l'enrichissement catégories, qui construisaient auparavant une
         # liste Python de TOUTES les lignes avant le premier INSERT.
-        chunks, bad_lines = iter_csv_chunks(file_bytes, chunksize=CHUNK_SIZE)
+        chunks, bad_lines = iter_csv_chunks(source_csv, chunksize=CHUNK_SIZE)
 
         with get_connection() as conn:
             for chunk_num, chunk_df in enumerate(chunks, start=1):
@@ -639,6 +826,7 @@ if not st.session_state.import_done:
         st.session_state.import_stats      = final_stats
         st.session_state.import_duration_s = t_elapsed
         st.session_state.import_done       = True
+        _supprimer_fichier_temp()  # le fichier d'export n'est plus utile
         st.session_state.skip_details      = skip_acc.details
         st.session_state.step              = 3
 
@@ -739,6 +927,7 @@ if stats.get("unmatched", 0) > 0:
 # Bouton pour recommencer un nouvel import
 st.markdown("")
 if st.button("Importer un autre fichier", key="reset_import"):
+    _supprimer_fichier_temp()
     for k, v in _DEFAULTS.items():
         st.session_state[k] = v
     st.rerun()

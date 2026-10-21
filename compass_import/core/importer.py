@@ -14,6 +14,7 @@ Flux d'utilisation typique :
 """
 
 import logging
+import os
 import sys
 from collections import Counter
 from datetime import date, datetime
@@ -109,6 +110,46 @@ def load_import_settings() -> dict:
     le reste doit passer par cette fonction plutôt que relire
     ``config.toml`` à la main."""
     return _load_config().get("import", {})
+
+
+# ─── Lecture : alias d'en-têtes et source (octets ou chemin) ─────────────────
+# Lot 1B. Le format plat d'api-explorer écrit ``Sampling`` (majuscule) alors
+# que Compass attend ``sampling``. Liste FERMÉE d'alias (config.toml
+# [import].alias_colonnes) appliquée juste après chaque lecture — pas de mise
+# en minuscules générale : ``product_name_SEMANTIWEB`` et ``attribute_*`` ont
+# des majuscules voulues.
+_DEFAULT_ALIAS_COLONNES = {"Sampling": "sampling"}
+
+# Source CSV acceptée par preview_csv / iter_csv_chunks / estimate_row_count :
+# les octets d'un dépôt manuel, ou le chemin d'un fichier sur disque (export
+# téléchargé depuis Storage, ≈ 0,5 Go pour 500 000 mentions) que pandas lit
+# alors par morceaux, sans jamais le charger entièrement en mémoire.
+CsvSource = bytes | str | os.PathLike
+
+_BLOC_LECTURE = 1024 * 1024  # 1 Mo
+
+
+def _alias_colonnes(config: dict) -> dict[str, str]:
+    return config.get("import", {}).get("alias_colonnes", _DEFAULT_ALIAS_COLONNES)
+
+
+def _appliquer_alias(df: pd.DataFrame, alias: dict[str, str]) -> pd.DataFrame:
+    """Renomme les en-têtes de ``alias`` présents dans ``df``. Ne renomme pas
+    si la colonne cible existe déjà : on ne crée jamais deux colonnes du même
+    nom (le fichier reste alors lu tel quel)."""
+    renommage = {
+        src: dst for src, dst in alias.items()
+        if src in df.columns and dst not in df.columns
+    }
+    return df.rename(columns=renommage) if renommage else df
+
+
+def _ouvrir(source: CsvSource):
+    """Ce que pandas lit : un flux en mémoire pour des octets, le chemin tel
+    quel sinon (pandas ouvre alors le fichier et le lit au fil de l'eau)."""
+    if isinstance(source, (bytes, bytearray)):
+        return BytesIO(source)
+    return source
 
 
 def _load_validation_rules(config: dict | None = None) -> dict[str, bool]:
@@ -231,6 +272,8 @@ def parse_csv(file_bytes: bytes) -> tuple[pd.DataFrame, list[dict]]:
             f"Détail : {exc}"
         ) from exc
 
+    df = _appliquer_alias(df, _alias_colonnes(config))
+
     missing = [c for c in required_columns if c not in df.columns]
     if missing:
         raise ValueError(
@@ -252,7 +295,7 @@ def parse_csv(file_bytes: bytes) -> tuple[pd.DataFrame, list[dict]]:
 # de ne jamais matérialiser le fichier entier : preview_csv() pour l'aperçu
 # avant lancement, iter_csv_chunks() pour l'import lui-même.
 
-def estimate_row_count(file_bytes: bytes) -> int:
+def estimate_row_count(source: CsvSource) -> int:
     """
     Estimation rapide du nombre de lignes de données (hors en-tête).
 
@@ -262,16 +305,29 @@ def estimate_row_count(file_bytes: bytes) -> int:
     (aperçu, barre de progression), jamais pour une décision métier — le
     compte exact est de toute façon accumulé au fil de l'import par
     iter_csv_chunks().
+
+    ``source`` : octets, ou chemin d'un fichier lu par blocs de 1 Mo.
     """
-    if not file_bytes:
-        return 0
-    newline_count = file_bytes.count(b"\n")
-    if not file_bytes.endswith(b"\n"):
+    if isinstance(source, (bytes, bytearray)):
+        if not source:
+            return 0
+        newline_count = source.count(b"\n")
+        ends_with_newline = source.endswith(b"\n")
+    else:
+        newline_count, last_byte = 0, b""
+        with open(source, "rb") as f:
+            while bloc := f.read(_BLOC_LECTURE):
+                newline_count += bloc.count(b"\n")
+                last_byte = bloc[-1:]
+        if not last_byte:
+            return 0
+        ends_with_newline = last_byte == b"\n"
+    if not ends_with_newline:
         newline_count += 1  # dernière ligne sans saut de ligne final
     return max(0, newline_count - 1)  # moins la ligne d'en-tête
 
 
-def preview_csv(file_bytes: bytes, n: int = 5) -> tuple[pd.DataFrame, int]:
+def preview_csv(source: CsvSource, n: int = 5) -> tuple[pd.DataFrame, int]:
     """
     Aperçu léger d'un CSV avant import : les ``n`` premières lignes et une
     estimation du nombre total de lignes — sans jamais charger le fichier
@@ -282,7 +338,7 @@ def preview_csv(file_bytes: bytes, n: int = 5) -> tuple[pd.DataFrame, int]:
     (l'en-tête est toujours inclus, quel que soit ``n``).
 
     Args:
-        file_bytes: Contenu binaire du fichier CSV.
+        source: Contenu binaire du fichier CSV, ou chemin du fichier.
         n: Nombre de lignes à charger pour l'aperçu (défaut 5).
 
     Returns:
@@ -298,7 +354,7 @@ def preview_csv(file_bytes: bytes, n: int = 5) -> tuple[pd.DataFrame, int]:
 
     try:
         head_df = pd.read_csv(
-            BytesIO(file_bytes),
+            _ouvrir(source),
             sep=";",
             encoding="utf-8-sig",
             dtype=str,
@@ -312,6 +368,8 @@ def preview_csv(file_bytes: bytes, n: int = 5) -> tuple[pd.DataFrame, int]:
             f"Détail : {exc}"
         ) from exc
 
+    head_df = _appliquer_alias(head_df, _alias_colonnes(config))
+
     missing = [c for c in required_columns if c not in head_df.columns]
     if missing:
         raise ValueError(
@@ -320,13 +378,13 @@ def preview_csv(file_bytes: bytes, n: int = 5) -> tuple[pd.DataFrame, int]:
             f"Colonnes trouvées : {', '.join(head_df.columns.tolist())}"
         )
 
-    return head_df, estimate_row_count(file_bytes)
+    return head_df, estimate_row_count(source)
 
 
 # ─── iter_csv_chunks ───────────────────────────────────────────────────────────
 
 def iter_csv_chunks(
-    file_bytes: bytes, chunksize: int = 1000
+    source: CsvSource, chunksize: int = 1000
 ) -> tuple[Iterator[pd.DataFrame], list[dict]]:
     """
     Version streaming de ``parse_csv`` : lit le fichier par lots de
@@ -351,7 +409,9 @@ def iter_csv_chunks(
     dominent le temps total d'un import.
 
     Args:
-        file_bytes: Contenu binaire du fichier CSV.
+        source: Contenu binaire du fichier CSV (dépôt manuel), ou chemin
+            d'un fichier sur disque (export téléchargé) — lu alors par
+            morceaux, sans jamais charger le fichier entier en mémoire.
         chunksize: Nombre de lignes par chunk (défaut 1000 — aligné sur
             ``config.toml [import].batch_size`` par convention, mais les
             deux valeurs sont indépendantes).
@@ -379,7 +439,7 @@ def iter_csv_chunks(
     # est invalide plutôt qu'après avoir déjà streamé une partie du contenu.
     try:
         header_df = pd.read_csv(
-            BytesIO(file_bytes), sep=";", encoding="utf-8-sig", nrows=0,
+            _ouvrir(source), sep=";", encoding="utf-8-sig", nrows=0,
         )
     except Exception as exc:
         raise ValueError(
@@ -387,6 +447,9 @@ def iter_csv_chunks(
             f"Vérifiez l'encodage (UTF-8 BOM) et le séparateur (;).\n"
             f"Détail : {exc}"
         ) from exc
+
+    alias = _alias_colonnes(config)
+    header_df = _appliquer_alias(header_df, alias)
 
     missing = [c for c in required_columns if c not in header_df.columns]
     if missing:
@@ -414,7 +477,7 @@ def iter_csv_chunks(
 
     def _chunks() -> Iterator[pd.DataFrame]:
         reader = pd.read_csv(
-            BytesIO(file_bytes),
+            _ouvrir(source),
             sep=";",
             encoding="utf-8-sig",
             dtype=str,
@@ -425,13 +488,15 @@ def iter_csv_chunks(
         )
         try:
             for chunk in reader:
-                yield chunk
+                yield _appliquer_alias(chunk, alias)
         except Exception as exc:
             raise ValueError(
                 f"Erreur de lecture en cours de fichier CSV (après un import "
                 f"partiel — les lignes déjà traitées restent en base).\n"
                 f"Détail : {exc}"
             ) from exc
+        finally:
+            reader.close()  # libère le fichier source (chemin) même si l'appelant s'arrête en route
 
     return _chunks(), bad_lines
 
