@@ -1,0 +1,71 @@
+# Thème Streamlit de la charte Consumer Voice (v1.0).
+# Mêmes valeurs que charte/jetons.py (vérifié par tests/test_charte.py). Ne pas modifier dans une seule appli.
+
+[theme]
+font = "Atkinson Hyperlegible Next:https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:wght@400;500;700;800&display=swap"
+headingFontWeights = 700
+headingFontSizes = ["1.3rem", "1.15rem", "1.05rem"]
+baseFontSize = 16
+baseRadius = "6px"
+buttonRadius = "4px"
+dataframeHeaderTextColor = "#ffffff"
+showWidgetBorder = true
+showSidebarBorder = true
+
+[theme.light]
+primaryColor = "#0e7490"
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f8f9fa"
+textColor = "#212529"
+linkColor = "#0d6efd"
+borderColor = "#dee2e6"
+dataframeBorderColor = "#dee2e6"
+dataframeHeaderBackgroundColor = "#065cb1"
+codeBackgroundColor = "#f8f9fa"
+blueBackgroundColor = "#e7f1ff"
+blueTextColor = "#0a3d7a"
+greenColor = "#198754"
+greenBackgroundColor = "#d1e7dd"
+greenTextColor = "#0a3622"
+yellowColor = "#b58105"
+yellowBackgroundColor = "#fff4d6"
+yellowTextColor = "#6b4a00"
+redColor = "#e34948"
+redBackgroundColor = "#f8d7da"
+redTextColor = "#58151c"
+orangeColor = "#a8421c"
+grayBackgroundColor = "#e9ecef"
+grayTextColor = "#495057"
+chartCategoricalColors = ["#065cb1", "#1ca9c9", "#5c636a", "#2a78d6", "#a8421c", "#198754"]
+
+[theme.light.sidebar]
+backgroundColor = "#f8f9fa"
+
+[theme.dark]
+primaryColor = "#0e7490"
+backgroundColor = "#12151d"
+secondaryBackgroundColor = "#1d2230"
+textColor = "#e9ecef"
+linkColor = "#7cc7ff"
+borderColor = "#2c3343"
+dataframeBorderColor = "#2c3343"
+dataframeHeaderBackgroundColor = "#0b3f80"
+codeBackgroundColor = "#1d2230"
+blueBackgroundColor = "#1b2b47"
+blueTextColor = "#c9dbf3"
+greenColor = "#6fcf8a"
+greenBackgroundColor = "#12301f"
+greenTextColor = "#a3e0b8"
+yellowColor = "#e0b341"
+yellowBackgroundColor = "#3a2f10"
+yellowTextColor = "#f6d58a"
+redColor = "#e66767"
+redBackgroundColor = "#3b1619"
+redTextColor = "#f5b5b9"
+orangeColor = "#f2a07d"
+grayBackgroundColor = "#262c3b"
+grayTextColor = "#adb5bd"
+chartCategoricalColors = ["#0b3f80", "#1ca9c9", "#454b52", "#3987e5", "#f2a07d", "#6fcf8a"]
+
+[theme.dark.sidebar]
+backgroundColor = "#0f1218"
