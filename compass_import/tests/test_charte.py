@@ -118,7 +118,7 @@ def test_badge_statut():
 # À compléter dans chaque application (chemins relatifs à RACINE) :
 # - PAGES : fichiers lancés par Streamlit (point d'entrée, pages/*.py) ; ils appellent appliquer_charte().
 # - MODULES : fichiers affichés DANS une page (ex. les modules d'api-explorer) ; ils ne contiennent plus st.title().
-PAGES: list[str] = []
+PAGES: list[str] = ["Home.py", "pages/1_Import.py", "pages/2_Matching.py", "pages/3_Outils.py", "pages/99_Admin.py"]
 MODULES: list[str] = []
 
 

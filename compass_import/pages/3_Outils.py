@@ -22,16 +22,15 @@ _ROOT = Path(__file__).parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
+from charte import appliquer_charte, libelle_statut
 from compass_ui.compass_ui import (
     alert,
     empty_state,
-    inject_css,
     log_table,
     metric_row,
+    nombre,
     page_header,
     product_status_table,
-    sidebar_header,
-    theme_toggle,
 )
 from compass_ui.skip_table import render_skip_details
 from core.db import get_active_env, get_connection
@@ -66,14 +65,12 @@ def _error_summary(error_detail) -> str:
 # ── Page config ───────────────────────────────────────────────────────────────
 st.set_page_config(
     page_title="Outils — Compass Consumer Voice",
-    page_icon="🔧",
+    page_icon=":material/build:",
     layout="wide",
 )
 exiger_mot_de_passe()  # la page s'arrête ici tant que le mot de passe n'est pas saisi
 
-inject_css()
-theme_toggle()
-sidebar_header()
+appliquer_charte()
 
 # ── En-tête ───────────────────────────────────────────────────────────────────
 page_header(
@@ -81,13 +78,7 @@ page_header(
     subtitle="Référentiel, renommage, vérification et logs d'import",
 )
 
-with st.sidebar:
-    st.markdown(
-        f'<div style="font-size:11px;color:var(--c-sidebar-text);padding:8px 16px">'
-        f'Environnement : <strong style="color:var(--c-cyan)">'
-        f'{get_active_env().upper()}</strong></div>',
-        unsafe_allow_html=True,
-    )
+st.sidebar.caption(f"Environnement : **{get_active_env().upper()}**")
 
 # ── Session state ─────────────────────────────────────────────────────────────
 _DEFAULTS: dict = {
@@ -110,10 +101,10 @@ for k, v in _DEFAULTS.items():
 
 # ── Tabs ──────────────────────────────────────────────────────────────────────
 tab1, tab2, tab3, tab4 = st.tabs([
-    "📋 Table de correspondance",
-    "✏ Renommer un produit",
-    "✓ Vérification produits",
-    "📊 Logs d'import",
+    ":material/table: Table de correspondance",
+    ":material/edit: Renommer un produit",
+    ":material/fact_check: Vérification des produits",
+    ":material/history: Logs d'import",
 ])
 
 # ═══════════════════════════════════════════════════════════════
@@ -121,7 +112,8 @@ tab1, tab2, tab3, tab4 = st.tabs([
 # ═══════════════════════════════════════════════════════════════
 
 with tab1:
-    st.markdown("#### Table de correspondance `categories_mapping`")
+    st.header("Table de correspondance", anchor=False)
+    st.caption("Contenu de la table `categories_mapping`.")
 
     # ── Chargement (cache session) ────────────────────────────────────────────
     if st.session_state.t1_data is None:
@@ -149,7 +141,7 @@ with tab1:
 
     if df_all is None or df_all.empty:
         empty_state(
-            "📋",
+            "",
             "Table de correspondance vide",
             "Utilisez le module Matching catégories pour ajouter des correspondances.",
         )
@@ -198,21 +190,20 @@ with tab1:
         pg       = min(st.session_state.t1_page, n_p_t1 - 1)
 
         metric_row([
-            {"label": "Correspondances totales", "value": f"{len(df_all):,}", "color": "blue"},
-            {"label": "Résultats filtrés",        "value": f"{total_t1:,}",   "color": "cyan"},
-            {"label": "Page",                     "value": f"{pg + 1} / {n_p_t1}", "color": "gray"},
+            {"label": "Correspondances totales", "value": len(df_all)},
+            {"label": "Résultats filtrés",       "value": total_t1},
+            {"label": "Page",                    "value": f"{pg + 1} / {n_p_t1}"},
         ])
 
         # ── Tableau ───────────────────────────────────────────────────────────
         df_page = df_f.iloc[pg * PAGE_T1 : (pg + 1) * PAGE_T1].copy()
-        df_page["matched_at"] = df_page["matched_at"].astype(str).str[:16].replace("NaT", "—")
+        df_page["matched_at"] = pd.to_datetime(df_page["matched_at"], errors="coerce")
         df_page["photo"]      = df_page["photo"].map(
             {True: "oui", False: "non"}
         ).fillna("—")
 
         st.dataframe(
             df_page,
-            use_container_width=True,
             hide_index=True,
             column_config={
                 "key_brandxpdt":          st.column_config.TextColumn("Clé", width="medium"),
@@ -221,47 +212,43 @@ with tab1:
                 "categorie_interne":      st.column_config.TextColumn("Catégorie"),
                 "sous_categorie_interne": st.column_config.TextColumn("Sous-catégorie"),
                 "photo":                  st.column_config.TextColumn("Photo", width="small"),
-                "matched_at":             st.column_config.TextColumn("Matchée le"),
+                "matched_at":             st.column_config.DatetimeColumn(
+                    "Matchée le", format="DD/MM/YYYY HH:mm"
+                ),
             },
         )
 
         # ── Pagination ────────────────────────────────────────────────────────
         if n_p_t1 > 1:
-            col_prev, col_lbl, col_nxt = st.columns([1, 4, 1])
-            with col_prev:
-                if pg > 0 and st.button("← Précédent", key="t1_prev"):
+            with st.container(horizontal=True, vertical_alignment="center"):
+                if pg > 0 and st.button(
+                    "Page précédente", icon=":material/arrow_back:", key="t1_prev"
+                ):
                     st.session_state.t1_page = pg - 1
                     st.rerun()
-            with col_lbl:
-                st.markdown(
-                    f'<p style="text-align:center;color:var(--c-text-2);margin-top:6px">'
-                    f'Page {pg + 1} / {n_p_t1}</p>',
-                    unsafe_allow_html=True,
-                )
-            with col_nxt:
-                if pg < n_p_t1 - 1 and st.button("Suivant →", key="t1_next"):
+                st.caption(f"Page {pg + 1} / {n_p_t1}")
+                if pg < n_p_t1 - 1 and st.button(
+                    "Page suivante", icon=":material/arrow_forward:", key="t1_next"
+                ):
                     st.session_state.t1_page = pg + 1
                     st.rerun()
 
-        st.markdown("")
-
         # ── Actions ───────────────────────────────────────────────────────────
-        col_dl, col_rf = st.columns([2, 1])
-        with col_dl:
+        with st.container(horizontal=True):
             csv_buf = io.StringIO()
             df_f.assign(
                 photo=df_f["photo"].map({True: "oui", False: "non"}).fillna("—"),
                 matched_at=df_f["matched_at"].astype(str).str[:16],
             ).to_csv(csv_buf, index=False, encoding="utf-8-sig")
             st.download_button(
-                label="📥 Exporter CSV",
+                label="Exporter en CSV",
+                icon=":material/download:",
                 data=csv_buf.getvalue().encode("utf-8-sig"),
                 file_name="categories_mapping_export.csv",
                 mime="text/csv",
                 key="t1_export",
             )
-        with col_rf:
-            if st.button("↺ Rafraîchir", key="t1_refresh", use_container_width=True):
+            if st.button("Rafraîchir la table", icon=":material/refresh:", key="t1_refresh"):
                 st.session_state.t1_data = None
                 st.rerun()
 
@@ -271,7 +258,7 @@ with tab1:
 # ═══════════════════════════════════════════════════════════════
 
 with tab2:
-    st.markdown("#### Renommer un produit")
+    st.header("Renommer un produit", anchor=False)
     st.caption(
         "Renomme un produit en cascade : tous ses verbatims et son entrée dans "
         "`categories_mapping` sont mis à jour atomiquement."
@@ -314,7 +301,7 @@ with tab2:
     products_map = st.session_state.t2_products or {}
 
     if not products_map:
-        empty_state("○", "Aucun produit en base", "Importez d'abord un fichier CSV.")
+        empty_state("", "Aucun produit en base", "Importez d'abord un fichier CSV.")
     else:
         # ── Sélection du produit ──────────────────────────────────────────────
         selected_key = st.selectbox(
@@ -332,10 +319,10 @@ with tab2:
             old_cm_key  = old_brand + old_pname
 
             metric_row([
-                {"label": "Marque",              "value": old_brand,                   "color": "cyan"},
-                {"label": "Verbatims concernés", "value": f"{info['nb_verbatims']:,}", "color": "warning"},
-                {"label": "Catégorie actuelle",  "value": info["categorie"],            "color": "blue"},
-                {"label": "Sous-catégorie",       "value": info["sous_cat"],             "color": "gray"},
+                {"label": "Marque",              "value": old_brand},
+                {"label": "Verbatims concernés", "value": info["nb_verbatims"]},
+                {"label": "Catégorie actuelle",  "value": info["categorie"]},
+                {"label": "Sous-catégorie",      "value": info["sous_cat"]},
             ])
 
             new_name = st.text_input(
@@ -353,8 +340,8 @@ with tab2:
             if rename_ready:
                 alert(
                     f"Cette action mettra à jour "
-                    f"<strong>{info['nb_verbatims']:,} verbatim(s)</strong> "
-                    f"et la table de correspondance (<code>categories_mapping</code>). "
+                    f"**{nombre(info['nb_verbatims'])} verbatim(s)** "
+                    f"et la table de correspondance (`categories_mapping`). "
                     "L'opération est irréversible.",
                     type="warning",
                     title=f"Renommer « {old_pname} » → « {new_name_clean} » (marque : {old_brand})",
@@ -370,12 +357,10 @@ with tab2:
                         st.rerun()
 
                 if st.session_state.t2_confirm:
-                    col_yes, col_no, _ = st.columns([1, 1, 4])
-                    with col_yes:
+                    with st.container(horizontal=True):
                         if st.button(
-                            "Oui, renommer",
+                            "Renommer le produit",
                             type="primary",
-                            use_container_width=True,
                             key="t2_yes",
                         ):
                             try:
@@ -403,10 +388,10 @@ with tab2:
                                 st.session_state.t3_data     = None
                                 st.session_state.t2_confirm  = False
                                 st.session_state.t2_success  = (
-                                    f"Produit <strong>{old_pname}</strong> renommé en "
-                                    f"<strong>{new_name_clean}</strong> "
+                                    f"Produit **{old_pname}** renommé en "
+                                    f"**{new_name_clean}** "
                                     f"(marque : {old_brand}) — "
-                                    f"{n_updated:,} verbatim(s) mis à jour."
+                                    f"{nombre(n_updated)} verbatim(s) mis à jour."
                                 )
                                 st.rerun()
 
@@ -414,8 +399,7 @@ with tab2:
                                 st.session_state.t2_confirm = False
                                 alert(f"Erreur lors du renommage : {exc}", type="error")
 
-                    with col_no:
-                        if st.button("Annuler", use_container_width=True, key="t2_no"):
+                        if st.button("Annuler le renommage", key="t2_no"):
                             st.session_state.t2_confirm = False
                             st.rerun()
 
@@ -426,7 +410,7 @@ with tab2:
                 type="success",
                 title="Renommage réussi",
             )
-            if st.button("Nouveau renommage", key="t2_reset"):
+            if st.button("Renommer un autre produit", key="t2_reset"):
                 st.session_state.t2_success = None
                 st.rerun()
 
@@ -436,10 +420,10 @@ with tab2:
 # ═══════════════════════════════════════════════════════════════
 
 with tab3:
-    st.markdown("#### Vérification des noms produits")
+    st.header("Vérification des noms de produits", anchor=False)
     st.caption(
         "Tous les produits en base, triés par volume de verbatims. "
-        "Un badge indique si la catégorie est connue."
+        "La colonne Statut indique si la catégorie est connue."
     )
 
     # ── Chargement ────────────────────────────────────────────────────────────
@@ -478,31 +462,29 @@ with tab3:
     products = st.session_state.t3_data or []
 
     if not products:
-        empty_state("○", "Aucun produit en base", "Importez d'abord un fichier CSV.")
+        empty_state("", "Aucun produit en base", "Importez d'abord un fichier CSV.")
     else:
         n_matched   = sum(1 for p in products if p["categorie_interne"])
         n_unmatched = len(products) - n_matched
 
         metric_row([
-            {"label": "Produits matchés",     "value": n_matched,   "color": "success"},
-            {"label": "À compléter",          "value": n_unmatched, "color": "warning" if n_unmatched else "gray"},
-            {"label": "Total produits",        "value": len(products), "color": "blue"},
+            {"label": "Produits matchés", "value": n_matched},
+            {"label": "À compléter",      "value": n_unmatched},
+            {"label": "Total produits",   "value": len(products)},
         ])
 
         if n_unmatched > 0:
-            st.markdown("")
             if st.button(
-                f"Aller au Matching catégories ({n_unmatched} produit(s) à traiter) →",
+                f"Ouvrir le matching des catégories ({nombre(n_unmatched)} produit(s) à traiter)",
                 type="primary",
+                icon=":material/arrow_forward:",
                 key="t3_goto_matching",
             ):
                 st.switch_page("pages/2_Matching.py")
 
-        st.markdown("")
         product_status_table(products)
 
-        st.markdown("")
-        if st.button("↺ Rafraîchir", key="t3_refresh"):
+        if st.button("Rafraîchir la liste", icon=":material/refresh:", key="t3_refresh"):
             st.session_state.t3_data = None
             st.rerun()
 
@@ -538,7 +520,7 @@ def _is_cache_stale(cached, expected_keys: set) -> bool:
 
 
 with tab4:
-    st.markdown("#### Logs d'import")
+    st.header("Logs d'import", anchor=False)
 
     # ── Chargement ────────────────────────────────────────────────────────────
     if st.session_state.t4_data is None or _is_cache_stale(st.session_state.t4_data, _T4_EXPECTED_KEYS):
@@ -603,17 +585,15 @@ with tab4:
     all_logs = st.session_state.t4_data or []
 
     # ── Filtre statut ─────────────────────────────────────────────────────────
-    col_filt, col_rf = st.columns([3, 1])
-    with col_filt:
+    with st.container(horizontal=True, vertical_alignment="bottom"):
         status_opts = ["Tous", "success", "partial", "error", "duplicate", "running"]
         sel_status  = st.selectbox(
-            "Filtre statut",
+            "Filtrer par statut",
             options=status_opts,
+            format_func=lambda s: s if s == "Tous" else libelle_statut(s),
             key="t4_status",
         )
-    with col_rf:
-        st.markdown("<div style='margin-top:28px'></div>", unsafe_allow_html=True)
-        if st.button("↺ Rafraîchir", key="t4_refresh", use_container_width=True):
+        if st.button("Rafraîchir les logs", icon=":material/refresh:", key="t4_refresh"):
             st.session_state.t4_data = None
             st.rerun()
 
@@ -625,35 +605,40 @@ with tab4:
 
     if not filtered:
         if sel_status != "Tous":
-            st.info(f"Aucun log avec le statut « {sel_status} ».")
+            st.info(
+                f"Aucun log avec le statut « {libelle_statut(sel_status)} ».",
+                icon=":material/info:",
+            )
         else:
             empty_state(
-                "📋",
+                "",
                 "Aucun log d'import",
                 "Les logs apparaîtront ici après le premier import.",
             )
     else:
         metric_row([
-            {"label": "Logs affichés", "value": len(filtered),  "color": "blue"},
-            {"label": "Total logs",    "value": len(all_logs),   "color": "gray"},
+            {"label": "Logs affichés", "value": len(filtered)},
+            {"label": "Total logs",    "value": len(all_logs)},
         ])
 
         # ── Tableau principal ─────────────────────────────────────────────────
         log_table(filtered)
 
         # ── Expandeurs détail ─────────────────────────────────────────────────
-        st.markdown("##### Détail par import")
+        st.subheader("Détail par import", anchor=False)
         for lg in filtered:
             raw_detail = lg.get("error_detail")
             has_detail = bool(raw_detail)
-            icon    = {"success": "✓", "partial": "⚠", "error": "✕",
-                       "duplicate": "⊘", "running": "↻"}.get(lg["status"], "○")
-            reset_prefix = "⟲ REPRISE — " if lg["import_type"] == "reset" else ""
+            icon    = {"success": ":material/check_circle:", "partial": ":material/warning:",
+                       "error": ":material/error:", "duplicate": ":material/content_copy:",
+                       "running": ":material/sync:"}.get(lg["status"], ":material/help:")
+            reset_prefix = "Reprise à zéro — " if lg["import_type"] == "reset" else ""
             label   = (
-                f"{icon} {reset_prefix}[{lg['started_at']}] {lg['filename']}"
-                + (" — voir détails" if has_detail else "")
+                f"{reset_prefix}{lg['started_at']} · {lg['filename']} · "
+                f"{libelle_statut(lg['status'])}"
+                + (" — voir le détail" if has_detail else "")
             )
-            with st.expander(label, expanded=False):
+            with st.expander(label, expanded=False, icon=icon):
                 if lg.get("data_purged"):
                     alert(
                         f"Données purgées lors de la reprise du "
@@ -665,22 +650,20 @@ with tab4:
 
                 ca, cb, cc = st.columns(3)
                 with ca:
-                    st.markdown(f"**Batch ID :** `{lg['id'][:8]}…`")
+                    st.markdown(f"**Lot :** `{lg['id'][:8]}…`")
                     st.markdown(f"**Type :** {lg['import_type']}")
-                    st.markdown(f"**Durée :** {lg['duration_s']}s")
+                    st.markdown(f"**Durée :** {nombre(lg['duration_s'])} s")
                 with cb:
-                    st.markdown(f"**Total lignes :** {lg['rows_total']:,}")
-                    st.markdown(f"**Insérés :** {lg['rows_inserted']:,}")
-                    st.markdown(f"**Ignorées :** {lg['rows_skipped']:,}")
+                    st.markdown(f"**Total lignes :** {nombre(lg['rows_total'])}")
+                    st.markdown(f"**Insérés :** {nombre(lg['rows_inserted'])}")
+                    st.markdown(f"**Ignorées :** {nombre(lg['rows_skipped'])}")
                 with cc:
-                    st.markdown(f"**Doublons :** {lg['rows_duplicates']:,}")
-                    st.markdown(f"**Matchés :** {lg['rows_matched']:,}")
-                    st.markdown(f"**Sans catégorie :** {lg['rows_unmatched']:,}")
+                    st.markdown(f"**Doublons :** {nombre(lg['rows_duplicates'])}")
+                    st.markdown(f"**Avec catégorie :** {nombre(lg['rows_matched'])}")
+                    st.markdown(f"**Sans catégorie :** {nombre(lg['rows_unmatched'])}")
 
                 if has_detail:
                     render_skip_details(raw_detail, key_prefix=f"log_{lg['id']}")
-
-        st.markdown("")
 
         # ── Export CSV ────────────────────────────────────────────────────────
         # "erreurs" résume LA NATURE des lignes ignorées (ex.
@@ -709,7 +692,8 @@ with tab4:
         csv_logs = io.StringIO()
         df_logs.to_csv(csv_logs, index=False, encoding="utf-8-sig")
         st.download_button(
-            label="📥 Exporter logs CSV",
+            label="Exporter les logs en CSV",
+            icon=":material/download:",
             data=csv_logs.getvalue().encode("utf-8-sig"),
             file_name="import_logs_export.csv",
             mime="text/csv",
