@@ -4,96 +4,67 @@ compass_ui.py
 Compass · Consumer Voice — Import Pipeline
 Composants UI réutilisables pour Streamlit.
 
+Depuis la charte Consumer Voice (docs/charte/DESIGN_GUIDE.md), ces fonctions
+gardent leur nom et leur signature, mais s'affichent avec les éléments natifs
+de Streamlit et le kit commun (charte/) : plus de HTML ni de CSS propres à
+Compass. Le thème clair / sombre se choisit dans le menu de Streamlit.
+
 Usage :
-    from compass_ui import ui
-    ui.inject_css()
-    ui.page_header("Import mensuel", "Charger un fichier CSV")
-    ui.metric_row([...])
+    from charte import appliquer_charte
+    from compass_ui.compass_ui import page_header, metric_row
+    appliquer_charte()
+    page_header("Import", "Charger le fichier CSV de l'API")
+    metric_row([...])
+
+Les messages passés à ``alert`` sont en Markdown (``**gras**``, ``` `code` ```),
+pas en HTML.
 """
 
-import re
-import streamlit as st
-from pathlib import Path
-from datetime import datetime
 from typing import Literal, Optional
 
+import pandas as pd
+import streamlit as st
 
-# ─── Helper HTML ───────────────────────────────────────────────────────────────
+from charte import (
+    appliquer_charte,
+    badge_statut,
+    bandeau,
+    encadre_cle,
+    etapes,
+    libelle_statut,
+    vide,
+)
 
-def _html(markup: str) -> None:
-    """Injecte du HTML via st.markdown en supprimant les lignes vides.
-
-    Le parser CommonMark de Streamlit termine un bloc HTML de type 6
-    (<div>, <table>, <span>…) à la première ligne vide ou ne contenant
-    que des espaces. Ce helper élimine ces lignes avant l'injection pour
-    éviter les rendus partiels où du HTML brut apparaît en clair.
-    """
-    cleaned = re.sub(r"\n[ \t]*\n", "\n", markup.strip())
-    st.markdown(cleaned, unsafe_allow_html=True)
+APPLI = "Consumer Voice · Import Compass"
 
 
-# ─── CSS injection ─────────────────────────────────────────────────────────────
+# ─── Format français ───────────────────────────────────────────────────────────
+
+def nombre(n) -> str:
+    """Entier au format français : 189 824 (espace insécable comme séparateur)."""
+    return f"{n:,}".replace(",", " ")
+
+
+# ─── Charte ────────────────────────────────────────────────────────────────────
 
 def inject_css():
-    """Injecte le design system Compass et applique le thème actif.
-
-    Le thème (light/dark) est stocké dans st.session_state.compass_theme.
-    En mode sombre, les sélecteurs [data-theme="dark"] du CSS sont remplacés
-    par :root — le bloc dark apparaît après le bloc light, donc la cascade CSS
-    standard l'emporte sans aucune iframe ni JavaScript.
-    """
-    if "compass_theme" not in st.session_state:
-        st.session_state.compass_theme = "light"
-
-    css_path = Path(__file__).parent / "style.css"
-    with open(css_path) as f:
-        css = f.read()
-
-    if st.session_state.compass_theme == "dark":
-        # Remap [data-theme="dark"] → :root so dark variables override light
-        # ones via normal CSS cascade (dark block is declared after light block).
-        css = css.replace('[data-theme="dark"]', ':root')
-
-    st.markdown(f"<style>{css}</style>", unsafe_allow_html=True)
+    """Ancien point d'entrée du design system : applique désormais la charte commune.
+    Les pages appellent directement ``charte.appliquer_charte()``."""
+    appliquer_charte()
 
 
 def theme_toggle():
-    """
-    Bouton switch Light / Dark mode (sidebar).
-    Utilise st.session_state pour persister le thème sur toutes les pages
-    de la session — sans iframe, sans JavaScript externe.
-    """
-    if "compass_theme" not in st.session_state:
-        st.session_state.compass_theme = "light"
+    """Ne fait plus rien : le thème se choisit dans le menu de Streamlit
+    (⋮ → Settings → Theme)."""
 
-    current = st.session_state.compass_theme
-    label   = "☀ Light" if current == "dark" else "◑ Dark"
-
-    if st.sidebar.button(label, key="compass_theme_toggle", use_container_width=False):
-        st.session_state.compass_theme = "dark" if current == "light" else "light"
-        st.rerun()
-
-
-# ─── Sidebar ────────────────────────────────────────────────────────────────────
 
 def sidebar_header():
-    """En-tête de la sidebar avec identité Compass."""
-    st.sidebar.markdown(
-        '<div class="compass-sidebar-logo">'
-        '<div class="compass-sidebar-brand">Compass</div>'
-        '<div class="compass-sidebar-title">Consumer Voice<br>Import Pipeline</div>'
-        '<div class="compass-sidebar-version">v1.0</div>'
-        "</div>",
-        unsafe_allow_html=True,
-    )
+    """Ne fait plus rien : le nom de l'application est dans le bandeau de chaque page."""
 
 
 def sidebar_section(label: str):
     """Label de section dans la sidebar."""
-    st.sidebar.markdown(
-        f'<div class="compass-sidebar-section">{label}</div>',
-        unsafe_allow_html=True,
-    )
+    st.sidebar.caption(label)
 
 
 # ─── Page header ────────────────────────────────────────────────────────────────
@@ -105,115 +76,99 @@ def page_header(
     badge_type: str = "cyan",
 ):
     """
-    En-tête de page avec identité Compass.
+    Bandeau de page (un seul par page, en premier).
 
     Args:
-        title: Titre principal de la page
+        title: Titre de la page
         subtitle: Sous-titre descriptif
-        badge: Texte du badge optionnel (ex: "Import initial")
-        badge_type: "success" | "error" | "warning" | "info" | "cyan" | "gray"
+        badge: Étiquette optionnelle (ex: "Import initial")
+        badge_type: conservé pour compatibilité, sans effet (le bandeau a une
+            seule couleur d'étiquette)
     """
-    badge_html    = f'<span class="badge badge-{badge_type} badge-no-dot">{badge}</span>' if badge else ""
-    subtitle_html = f'<p class="compass-subtitle">{subtitle}</p>' if subtitle else ""
-    _html(
-        f'<div class="compass-header">'
-        f'<div class="compass-header-left">'
-        f'<div class="compass-brand">Compass \u00b7 Consumer Voice</div>'
-        f'<h1 class="compass-title">{title}</h1>'
-        f"{subtitle_html}"
-        f"</div>"
-        f'<div class="compass-header-right">{badge_html}</div>'
-        f"</div>"
-    )
+    bandeau(APPLI, title, sous_titre=subtitle or None, etiquette=badge)
 
 
 # ─── Metrics ────────────────────────────────────────────────────────────────────
 
 def metric_row(metrics: list[dict]):
     """
-    Ligne de cartes métriques.
+    Ligne de chiffres clés (``st.metric`` bordés).
 
     Args:
         metrics: Liste de dicts avec clés :
             - label (str)
             - value (str | int)
-            - color (optionnel): "blue" | "success" | "warning" | "error" | "cyan"
-            - delta (optionnel): str affiché en dessous
-            - delta_dir (optionnel): "up" | "down"
+            - delta (optionnel) : affiché seulement si toutes les métriques
+              en ont un (règle de la charte : tous ou aucun)
+            - color, delta_dir : conservés pour compatibilité, sans effet
 
     Exemple:
         ui.metric_row([
-            {"label": "Verbatims insérés", "value": "42 156", "color": "success"},
-            {"label": "Skipped", "value": "14", "color": "warning"},
-            {"label": "Sans catégorie", "value": "87", "color": "error"},
+            {"label": "Verbatims insérés", "value": "42 156"},
+            {"label": "Lignes ignorées", "value": "14"},
         ])
     """
-    color_map = {
-        "blue":    "var(--c-blue)",
-        "success": "var(--c-success)",
-        "warning": "var(--c-warning)",
-        "error":   "var(--c-error)",
-        "cyan":    "var(--c-cyan)",
-        "gray":    "var(--c-text-2)",
-    }
-
-    cards_html = ""
-    for m in metrics:
-        color = color_map.get(m.get("color", "blue"), color_map["blue"])
-        delta_html = ""
-        if m.get("delta"):
-            dir_class  = m.get("delta_dir", "")
-            symbol     = "↑" if dir_class == "up" else ("↓" if dir_class == "down" else "")
-            delta_html = f'<div class="compass-metric-delta {dir_class}">{symbol} {m["delta"]}</div>'
-        # Compact — pas de lignes vides même si delta_html est vide
-        cards_html += (
-            f'<div class="compass-metric">'
-            f'<div class="compass-metric-value" style="color:{color}">{m["value"]}</div>'
-            f'<div class="compass-metric-label">{m["label"]}</div>'
-            f"{delta_html}"
-            f"</div>"
-        )
-
-    _html(f'<div class="compass-metrics">{cards_html}</div>')
+    if not metrics:
+        return
+    avec_delta = all(m.get("delta") for m in metrics)
+    for col, m in zip(st.columns(len(metrics)), metrics):
+        valeur = m["value"]
+        if isinstance(valeur, int) and not isinstance(valeur, bool):
+            valeur = nombre(valeur)
+        with col:
+            st.metric(
+                m["label"],
+                valeur,
+                delta=m["delta"] if avec_delta else None,
+                border=True,
+            )
 
 
 # ─── Badges ─────────────────────────────────────────────────────────────────────
 
 def badge(text: str, type: str = "gray") -> str:
     """
-    Retourne le HTML d'un badge inline.
+    Badge natif en Markdown (à afficher avec st.markdown).
     type: "success" | "error" | "warning" | "info" | "cyan" | "gray" | "duplicate"
     """
-    return f'<span class="badge badge-{type}">{text}</span>'
+    couleur = {
+        "success": "green", "error": "red", "warning": "yellow",
+        "info": "blue", "cyan": "blue", "duplicate": "yellow",
+    }.get(type, "gray")
+    texte = text.replace("[", "(").replace("]", ")")
+    return f":{couleur}-badge[{texte}]"
 
 
 def status_badge(status: str) -> str:
     """
-    Badge de statut pour les logs d'import.
-    status: "success" | "partial" | "error" | "duplicate"
+    Badge de statut pour les logs d'import (Markdown natif).
+    status: "running" | "success" | "partial" | "error" | "duplicate"
     """
-    config = {
-        "success":   ("Succès",  "success"),
-        "partial":   ("Partiel", "warning"),
-        "error":     ("Erreur",  "error"),
-        "duplicate": ("Doublon", "duplicate"),
-    }
-    label, type_ = config.get(status, (status, "gray"))
-    return badge(label, type_)
+    return badge_statut(status)
+
+
+_TYPES_IMPORT = {
+    "initial": "Import initial",
+    "mensuel": "Import mensuel",
+    "reset":   "Reprise à zéro",
+}
 
 
 def import_type_badge(type_: str) -> str:
-    """Badge pour le type d'import."""
-    config = {
-        "initial": ("Import initial", "cyan"),
-        "mensuel": ("Import mensuel", "info"),
-        "reset":   ("⟲ Reprise à zéro", "warning"),
-    }
-    label, btype = config.get(type_, (type_, "gray"))
-    return badge(label, btype)
+    """Badge pour le type d'import (Markdown natif)."""
+    return badge(_TYPES_IMPORT.get(type_, type_), "warning" if type_ == "reset" else "info")
 
 
 # ─── Alert blocks ───────────────────────────────────────────────────────────────
+
+_ALERTES = {
+    "success":   (st.success, ":material/check_circle:"),
+    "error":     (st.error,   ":material/error:"),
+    "warning":   (st.warning, ":material/warning:"),
+    "info":      (st.info,    ":material/info:"),
+    "duplicate": (st.info,    ":material/content_copy:"),
+}
+
 
 def alert(
     message: str,
@@ -221,29 +176,16 @@ def alert(
     title: Optional[str] = None,
 ):
     """
-    Bloc d'alerte Compass avec bordure colorée.
+    Alerte native (st.info / st.success / st.warning / st.error).
 
     Args:
-        message: Corps du message
+        message: Corps du message, en Markdown
         type: Type d'alerte
         title: Titre en gras optionnel
     """
-    icons = {
-        "success":   "✓",
-        "error":     "✕",
-        "warning":   "⚠",
-        "info":      "ℹ",
-        "duplicate": "⊘",
-    }
-    icon       = icons.get(type, "ℹ")
-    title_html = f"<strong>{title}</strong>" if title else ""
-    # Compact — title_html peut être vide, on évite une ligne blanche
-    _html(
-        f'<div class="compass-alert {type}">'
-        f'<span class="compass-alert-icon">{icon}</span>'
-        f'<div class="compass-alert-content">{title_html}{message}</div>'
-        f"</div>"
-    )
+    fonction, icone = _ALERTES.get(type, _ALERTES["info"])
+    corps = f"**{title}**\n\n{message}" if title else message
+    fonction(corps, icon=icone)
 
 
 def previous_import_alert(
@@ -280,27 +222,27 @@ def previous_import_alert(
         (tentative précédente en échec, incomplète, ou probablement
         interrompue).
     """
-    batch_str = f" (batch <code>{batch_id[:8]}…</code>)" if batch_id else ""
+    batch_str = f" (lot `{batch_id[:8]}…`)" if batch_id else ""
     when = finished_at or started_at
 
     if status == "success":
         alert(
             message=(
-                f"<strong>{rows_inserted:,}</strong> verbatim(s) déjà "
-                f"inséré(s) le <strong>{when}</strong>{batch_str}. Relancer "
+                f"**{nombre(rows_inserted)}** verbatim(s) déjà "
+                f"inséré(s) le **{when}**{batch_str}. Relancer "
                 "l'import réinsérerait les mêmes lignes pour rien — c'est "
                 "pour ça qu'il est bloqué, pas parce qu'il y a un problème."
             ),
             type="success",
-            title=f"✅ Ce fichier a déjà été importé avec succès — {filename}",
+            title=f"Ce fichier a déjà été importé avec succès — {filename}",
         )
         return True
 
     if status == "partial":
         alert(
             message=(
-                f"<strong>{rows_inserted:,}</strong> / {rows_total:,} "
-                f"verbatim(s) insérés le <strong>{started_at}</strong>"
+                f"**{nombre(rows_inserted)}** / {nombre(rows_total)} "
+                f"verbatim(s) insérés le **{started_at}**"
                 f"{batch_str} — l'import précédent ne s'est pas terminé "
                 "normalement (voir Outils → Logs d'import pour le détail). "
                 "Vous pouvez relancer l'import ci-dessous : les lignes déjà "
@@ -314,9 +256,9 @@ def previous_import_alert(
     if status == "error":
         alert(
             message=(
-                f"La tentative du <strong>{started_at}</strong>{batch_str} "
+                f"La tentative du **{started_at}**{batch_str} "
                 "a échoué avant d'aboutir. Consultez "
-                "<strong>Outils → Logs d'import</strong> pour le détail, "
+                "**Outils → Logs d'import** pour le détail, "
                 "puis relancez l'import ci-dessous — rien ne vous en empêche."
             ),
             type="error",
@@ -330,7 +272,7 @@ def previous_import_alert(
     # et n'appelle cette fonction que pour le cas "probablement interrompu".
     alert(
         message=(
-            f"Un import de ce fichier a démarré le <strong>{started_at}</strong>"
+            f"Un import de ce fichier a démarré le **{started_at}**"
             f"{batch_str} et n'est jamais arrivé à son terme (crash probable — "
             "voir Outils → Logs d'import). Vous pouvez relancer l'import "
             "ci-dessous."
@@ -343,12 +285,22 @@ def previous_import_alert(
 
 # ─── Hash check ─────────────────────────────────────────────────────────────────
 
+_HASH_CHECK = {
+    # statut : (couleur du badge, icône Material, libellé)
+    "ok":           ("green",  "check_circle", "Fichier nouveau — import autorisé"),
+    "dupe-success": ("green",  "check_circle", "Déjà importé avec succès"),
+    "dupe-issue":   ("yellow", "warning",      "Tentative précédente incomplète — nouvel essai possible"),
+    "dupe-running": ("blue",   "sync",         "Import déjà en cours pour ce fichier"),
+    "idle":         ("gray",   "schedule",     "En attente d'un fichier…"),
+}
+
+
 def hash_check(
     status: Literal["ok", "dupe-success", "dupe-issue", "dupe-running", "idle"],
     detail: str = "",
 ):
     """
-    Indicateur de contrôle hash fichier.
+    Indicateur de contrôle hash fichier (badge natif : icône + mot).
 
     Args:
         status: "ok" = nouveau fichier | "dupe-success" = déjà importé avec
@@ -358,27 +310,9 @@ def hash_check(
             temporaire) | "idle" = en attente
         detail: Texte complémentaire (ex: date du premier import)
     """
-    icons  = {
-        "ok":           "✓",
-        "dupe-success": "✓",
-        "dupe-issue":   "⚠",
-        "dupe-running": "↻",
-        "idle":         "○",
-    }
-    labels = {
-        "ok":           "Fichier nouveau — import autorisé",
-        "dupe-success": "Déjà importé avec succès",
-        "dupe-issue":   "Tentative précédente incomplète — nouvel essai possible",
-        "dupe-running": "Import déjà en cours pour ce fichier",
-        "idle":         "En attente d'un fichier…",
-    }
-    icon  = icons[status]
-    label = detail or labels[status]
-    _html(
-        f'<div class="compass-hash-check {status}">'
-        f"<span>{icon}</span><span>{label}</span>"
-        f"</div>"
-    )
+    couleur, icone, libelle = _HASH_CHECK[status]
+    texte = (detail or libelle).replace("[", "(").replace("]", ")")
+    st.markdown(f":{couleur}-badge[:material/{icone}: {texte}]")
 
 
 # ─── Step indicator ──────────────────────────────────────────────────────────────
@@ -392,157 +326,88 @@ def steps(items: list[str], current: int):
         current: Index de l'étape active (0-based)
 
     Exemple:
-        ui.steps(["Upload", "Validation", "Import", "Résumé"], current=1)
+        ui.steps(["Fichier", "Vérification", "Import", "Résumé"], current=1)
     """
-    steps_html = ""
-    for i, label in enumerate(items):
-        if i < current:
-            cls, num = "done", "✓"
-        elif i == current:
-            cls, num = "active", str(i + 1)
-        else:
-            cls, num = "", str(i + 1)
-        steps_html += (
-            f'<div class="compass-step {cls}">'
-            f'<div class="compass-step-num">{num}</div>'
-            f"{label}</div>"
-        )
-    _html(f'<div class="compass-steps">{steps_html}</div>')
+    etapes(items, courante=current)
 
 
 # ─── Progress block ──────────────────────────────────────────────────────────────
 
 def progress_block(title: str, subtitle: str, percent: int):
     """
-    Bloc de progression pendant un import.
+    Barre de progression pendant un import.
 
     Args:
         title: Ex: "Import en cours…"
         subtitle: Ex: "Traitement de 42 000 / 500 000 lignes"
         percent: 0–100
     """
-    _html(
-        f'<div class="compass-progress-block">'
-        f'<div class="compass-progress-title">{title}</div>'
-        f'<div class="compass-progress-sub">{subtitle}</div>'
-        f'<div class="compass-progress-bar-wrap">'
-        f'<div class="compass-progress-bar" style="width:{percent}%"></div>'
-        f"</div>"
-        f'<div style="font-size:12px;color:var(--c-text-2)">{percent}%</div>'
-        f"</div>"
-    )
-
-
-# ─── Section card ────────────────────────────────────────────────────────────────
-
-def card_start(title: str, icon: str = ""):
-    """Ouvre une carte section. Fermer avec card_end()."""
-    icon_html = f'<span style="font-size:16px">{icon}</span>' if icon else ""
-    _html(
-        f'<div class="compass-card">'
-        f'<div class="compass-card-title">{icon_html}{title}</div>'
-    )
-
-
-def card_end():
-    """Ferme une carte section."""
-    st.markdown("</div>", unsafe_allow_html=True)
+    percent = max(0, min(100, int(percent)))
+    st.progress(percent / 100, text=f"{title} — {subtitle} ({percent} %)")
 
 
 # ─── Import mode toggle ──────────────────────────────────────────────────────────
 
 def import_mode_toggle() -> str:
     """
-    Toggle Import initial / Import mensuel.
+    Choix Import mensuel / Import initial.
     Retourne "initial" ou "mensuel".
-    Utilise st.radio stylisé.
     """
-    mode = st.radio(
+    mode = st.segmented_control(
         "Mode d'import",
         options=["Import mensuel", "Import initial (one-shot)"],
-        horizontal=True,
+        default="Import mensuel",
+        required=True,
         help=(
             "**Import mensuel** : fichier courant de l'API — "
-            "catégorie, sous-catégorie et photo seront NULL.\n\n"
+            "catégorie, sous-catégorie et photo seront vides.\n\n"
             "**Import initial** : fichier historique complet — "
             "tous les champs sont déjà remplis."
         ),
     )
-    return "initial" if "initial" in mode else "mensuel"
+    return "initial" if mode and "initial" in mode else "mensuel"
 
 
 # ─── Log table ───────────────────────────────────────────────────────────────────
 
 def log_table(logs: list[dict]):
     """
-    Tableau de logs d'import stylisé.
+    Tableau des logs d'import.
 
     Args:
         logs: Liste de dicts avec clés :
             started_at, filename, import_type, rows_inserted,
             rows_skipped, rows_matched, rows_unmatched, status, duration_s
-
-    Exemple:
-        ui.log_table([
-            {
-                "started_at": "2024-06-01 08:32",
-                "filename": "aderma_june_2024.csv",
-                "import_type": "mensuel",
-                "rows_inserted": 42156,
-                "rows_skipped": 14,
-                "rows_matched": 41980,
-                "rows_unmatched": 176,
-                "status": "success",
-                "duration_s": 127,
-            }
-        ])
     """
     if not logs:
-        _html(
-            '<div class="compass-card" style="text-align:center;padding:2.5rem">'
-            '<div style="font-size:32px;margin-bottom:12px">📋</div>'
-            '<div style="font-size:15px;font-weight:600;color:var(--c-deep)">Aucun import réalisé</div>'
-            '<div style="font-size:13px;color:var(--c-text-2);margin-top:4px">Les logs apparaîtront ici après le premier import.</div>'
-            "</div>"
-        )
+        vide("Aucun import réalisé. Les logs apparaîtront ici après le premier import.")
         return
 
-    rows_html = ""
-    for i, log in enumerate(logs):
-        row_classes = []
-        if i % 2 == 1:
-            row_classes.append("alt")
-        if log.get("import_type") == "reset":
-            row_classes.append("reset")
-        duration = f"{log.get('duration_s', 0)}s"
-        # Compact — une ligne par <tr> pour éviter les lignes vides
-        rows_html += (
-            f'<tr class="{" ".join(row_classes)}">'
-            f'<td style="color:var(--c-text-2);white-space:nowrap">{log.get("started_at", "—")}</td>'
-            f'<td style="font-weight:500">{log.get("filename", "—")}</td>'
-            f"<td>{import_type_badge(log.get('import_type', ''))}</td>"
-            f'<td style="text-align:right;color:var(--c-success)">{log.get("rows_inserted", 0):,}</td>'
-            f'<td style="text-align:right;color:var(--c-warning)">{log.get("rows_skipped", 0):,}</td>'
-            f'<td style="text-align:right">{log.get("rows_matched", 0):,}</td>'
-            f'<td style="text-align:right;color:var(--c-error)">{log.get("rows_unmatched", 0):,}</td>'
-            f"<td>{status_badge(log.get('status', ''))}</td>"
-            f'<td style="color:var(--c-text-2)">{duration}</td>'
-            f"</tr>"
-        )
-
-    _html(
-        '<table class="compass-log-table">'
-        "<thead><tr>"
-        "<th>Date</th>"
-        "<th>Fichier</th>"
-        "<th>Type</th>"
-        '<th style="text-align:right">Insérés</th>'
-        '<th style="text-align:right">Skipped</th>'
-        '<th style="text-align:right">Matchés</th>'
-        '<th style="text-align:right">Sans catég.</th>'
-        "<th>Statut</th>"
-        "<th>Durée</th>"
-        f"</tr></thead><tbody>{rows_html}</tbody></table>"
+    df = pd.DataFrame([
+        {
+            "Date":            log.get("started_at", "—"),
+            "Fichier":         log.get("filename", "—"),
+            "Type":            _TYPES_IMPORT.get(log.get("import_type", ""), log.get("import_type", "—")),
+            "Insérés":         log.get("rows_inserted", 0),
+            "Ignorées":        log.get("rows_skipped", 0),
+            "Avec catégorie":  log.get("rows_matched", 0),
+            "Sans catégorie":  log.get("rows_unmatched", 0),
+            "Statut":          libelle_statut(log.get("status", "")),
+            "Durée (s)":       log.get("duration_s", 0),
+        }
+        for log in logs
+    ])
+    nombre_col = st.column_config.NumberColumn
+    st.dataframe(
+        df,
+        hide_index=True,
+        column_config={
+            "Insérés":        nombre_col(format="localized"),
+            "Ignorées":       nombre_col(format="localized"),
+            "Avec catégorie": nombre_col(format="localized"),
+            "Sans catégorie": nombre_col(format="localized"),
+            "Durée (s)":      nombre_col(format="localized"),
+        },
     )
 
 
@@ -557,7 +422,7 @@ def import_summary(
     rows_duplicates: int = 0,
 ):
     """
-    Résumé post-import avec métriques colorées.
+    Résumé post-import : chiffres clés et phrase de conclusion.
 
     ``rows_skipped`` (validation, en amont de l'INSERT) et
     ``rows_duplicates`` (``ON CONFLICT DO NOTHING``, en base ou interne au
@@ -566,19 +431,21 @@ def import_summary(
     la confusion qui masquait l'origine des "doublons" avant cette refonte.
     """
     metric_row([
-        {"label": "Verbatims insérés", "value": f"{rows_inserted:,}",  "color": "success"},
-        {"label": "Lignes ignorées",   "value": f"{rows_skipped:,}",   "color": "warning" if rows_skipped else "gray"},
-        {"label": "Doublons",          "value": f"{rows_duplicates:,}", "color": "gray"},
-        {"label": "Avec catégorie",    "value": f"{rows_matched:,}",   "color": "blue"},
-        {"label": "Sans catégorie",    "value": f"{rows_unmatched:,}", "color": "error" if rows_unmatched else "gray"},
+        {"label": "Verbatims insérés", "value": rows_inserted},
+        {"label": "Lignes ignorées",   "value": rows_skipped},
+        {"label": "Doublons",          "value": rows_duplicates},
+        {"label": "Avec catégorie",    "value": rows_matched},
+        {"label": "Sans catégorie",    "value": rows_unmatched},
     ])
+    conclusion = f"{nombre(rows_inserted)} verbatim(s) inséré(s)"
     if duration_s:
-        _html(f'<p style="font-size:12px;color:var(--c-text-2);margin-top:4px">⏱ Import terminé en {duration_s}s</p>')
+        conclusion += f" en {nombre(duration_s)} s"
+    encadre_cle(conclusion + ".", titre="Import terminé")
     if rows_unmatched > 0:
         alert(
             message=(
-                f"<strong>{rows_unmatched:,} verbatims</strong> n'ont pas de catégorie. "
-                "Utilisez le module <strong>Matching catégories</strong> pour les compléter."
+                f"**{nombre(rows_unmatched)} verbatims** n'ont pas de catégorie. "
+                "Utilisez le module **Matching catégories** pour les compléter."
             ),
             type="warning",
         )
@@ -589,8 +456,8 @@ def import_summary(
 def matching_summary(products_matched: int, verbatims_updated: int):
     """Résumé post-matching."""
     metric_row([
-        {"label": "Produits matchés",     "value": str(products_matched),    "color": "success"},
-        {"label": "Verbatims mis à jour", "value": f"{verbatims_updated:,}", "color": "blue"},
+        {"label": "Produits matchés",     "value": products_matched},
+        {"label": "Verbatims mis à jour", "value": verbatims_updated},
     ])
 
 
@@ -607,61 +474,34 @@ def product_status_table(products: list[dict]):
     if not products:
         return
 
-    rows_html = ""
-    for i, p in enumerate(products):
-        alt    = "alt" if i % 2 == 1 else ""
-        cat    = p.get("categorie_interne") or ""
-        sous   = p.get("sous_categorie_interne") or ""
-        photo  = p.get("photo")
-
-        status_html = badge("Matchée", "success") if cat else badge("À compléter", "warning")
-        photo_html  = (
-            badge("Oui", "cyan") if photo is True
-            else badge("Non", "gray") if photo is False
-            else badge("—", "gray")
-        )
-        cat_html  = cat  or '<span style="color:var(--c-text-3)">—</span>'
-        sous_html = sous or '<span style="color:var(--c-text-3)">—</span>'
-        name      = p.get("product_name", "")
-
-        # Compact — pas de lignes vides même avec de longues valeurs
-        rows_html += (
-            f'<tr class="{alt}">'
-            f'<td style="font-weight:500;max-width:260px;overflow:hidden;'
-            f'text-overflow:ellipsis;white-space:nowrap" title="{name}">{name}</td>'
-            f'<td style="text-align:right">{p.get("nb_verbatims", 0):,}</td>'
-            f"<td>{cat_html}</td>"
-            f"<td>{sous_html}</td>"
-            f"<td>{photo_html}</td>"
-            f"<td>{status_html}</td>"
-            f"</tr>"
-        )
-
-    _html(
-        '<table class="compass-log-table">'
-        "<thead><tr>"
-        "<th>Produit</th>"
-        '<th style="text-align:right">Verbatims</th>'
-        "<th>Catégorie</th>"
-        "<th>Sous-catégorie</th>"
-        "<th>Photo</th>"
-        "<th>Statut</th>"
-        f"</tr></thead><tbody>{rows_html}</tbody></table>"
+    photo_libelle = {True: "Oui", False: "Non"}
+    df = pd.DataFrame([
+        {
+            "Produit":        p.get("product_name", ""),
+            "Verbatims":      p.get("nb_verbatims", 0),
+            "Catégorie":      p.get("categorie_interne") or "—",
+            "Sous-catégorie": p.get("sous_categorie_interne") or "—",
+            "Photo":          photo_libelle.get(p.get("photo"), "—"),
+            "Statut":         "Matchée" if p.get("categorie_interne") else "À compléter",
+        }
+        for p in products
+    ])
+    st.dataframe(
+        df,
+        hide_index=True,
+        column_config={
+            "Produit":   st.column_config.TextColumn(width="large"),
+            "Verbatims": st.column_config.NumberColumn(format="localized"),
+        },
     )
 
 
 # ─── Empty state ─────────────────────────────────────────────────────────────────
 
 def empty_state(icon: str, title: str, subtitle: str = ""):
-    """État vide générique."""
-    subtitle_html = f'<div style="font-size:13px;color:var(--c-text-2)">{subtitle}</div>' if subtitle else ""
-    _html(
-        '<div class="compass-card" style="text-align:center;padding:3rem 2rem">'
-        f'<div style="font-size:40px;margin-bottom:16px">{icon}</div>'
-        f'<div style="font-size:16px;font-weight:600;color:var(--c-deep);margin-bottom:6px">{title}</div>'
-        f"{subtitle_html}"
-        "</div>"
-    )
+    """État vide générique. ``icon`` est conservé pour compatibilité, sans effet."""
+    titre = title.rstrip(".")
+    vide(f"{titre}. {subtitle}" if subtitle else f"{titre}.")
 
 
 # ─── Divider with label ───────────────────────────────────────────────────────────
@@ -669,13 +509,6 @@ def empty_state(icon: str, title: str, subtitle: str = ""):
 def section_divider(label: str = ""):
     """Séparateur de section avec label optionnel."""
     if label:
-        _html(
-            '<div style="display:flex;align-items:center;gap:12px;margin:1.5rem 0">'
-            '<div style="flex:1;height:1px;background:var(--c-border)"></div>'
-            f'<span style="font-size:11px;font-weight:700;letter-spacing:0.08em;'
-            f'text-transform:uppercase;color:var(--c-text-2)">{label}</span>'
-            '<div style="flex:1;height:1px;background:var(--c-border)"></div>'
-            "</div>"
-        )
+        st.header(label, anchor=False)
     else:
-        st.markdown("<hr>", unsafe_allow_html=True)
+        st.divider()
