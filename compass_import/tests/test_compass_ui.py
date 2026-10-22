@@ -30,6 +30,12 @@ def _run_previous_import_alert(**kwargs):
     return at
 
 
+def _texte_affiche(at) -> str:
+    """Texte affiché : Markdown et alertes natives (st.success / st.info / …)."""
+    elements = [*at.markdown, *at.success, *at.info, *at.warning, *at.error]
+    return " ".join(e.value for e in elements)
+
+
 class TestPreviousImportAlertSuccess:
     def test_is_blocking(self):
         at = _run_previous_import_alert(
@@ -43,8 +49,9 @@ class TestPreviousImportAlertSuccess:
             filename="f.csv", status="success", started_at="01/01/2026 10:00",
             rows_inserted=45213,
         )
-        markdown_text = " ".join(m.value for m in at.markdown)
-        assert "45,213" in markdown_text or "45213" in markdown_text
+        markdown_text = _texte_affiche(at)
+        # Nombre au format français (charte Consumer Voice) : 45 213
+        assert "45\u00a0213" in markdown_text or "45213" in markdown_text
         assert "succès" in markdown_text.lower()
         # Pas de vocabulaire d'échec — le seul "bloqué" présent explique
         # calmement pourquoi (fichier déjà en base), ce n'est pas une erreur.
@@ -63,7 +70,7 @@ class TestPreviousImportAlertError:
         at = _run_previous_import_alert(
             filename="f.csv", status="error", started_at="01/01/2026 10:00",
         )
-        markdown_text = " ".join(m.value for m in at.markdown).lower()
+        markdown_text = _texte_affiche(at).lower()
         assert "relancez" in markdown_text or "relance" in markdown_text
 
 

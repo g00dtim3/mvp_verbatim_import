@@ -23,7 +23,6 @@ Flux :
   `import_logs` exploitable au lieu d'un enregistrement bloqué à zéro.
 """
 
-import html
 import json
 import logging
 import sys
@@ -45,18 +44,17 @@ if str(_ROOT) not in sys.path:
 import psycopg2
 from psycopg2.extras import Json
 
+from charte import appliquer_charte, section
 from compass_ui.compass_ui import (
     alert,
     hash_check,
     import_mode_toggle,
     import_summary,
-    inject_css,
+    nombre,
     page_header,
     previous_import_alert,
     progress_block,
-    sidebar_header,
     steps,
-    theme_toggle,
 )
 from compass_ui.skip_table import render_duplicates_note, render_skip_details
 from core.db import get_active_env, get_connection
@@ -105,15 +103,13 @@ _RUNNING_STALE_MINUTES = 15
 # ── Configuration Streamlit ────────────────────────────────────────────────────
 st.set_page_config(
     page_title="Import — Compass Consumer Voice",
-    page_icon="📥",
+    page_icon=":material/upload:",
     layout="wide",
 )
 exiger_mot_de_passe()  # la page s'arrête ici tant que le mot de passe n'est pas saisi
 
-# ── Design system ──────────────────────────────────────────────────────────────
-inject_css()
-theme_toggle()
-sidebar_header()
+# ── Charte Consumer Voice ─────────────────────────────────────────────────────
+appliquer_charte()
 
 # ── Initialisation session_state ──────────────────────────────────────────────
 _DEFAULTS = {
@@ -272,662 +268,650 @@ def _log_progress(conn, batch_id: str, stats: dict, status: str,
 
 # ─── En-tête de page ──────────────────────────────────────────────────────────
 
+_ETAPES = ["Fichier", "Vérification", "Import", "Résumé"]
+
 _mode = st.session_state.import_mode
 _badge = (
     "Import initial" if _mode == "initial"
     else "Import périodique" if _mode == "mensuel"
     else None
 )
-_badge_type = "cyan" if _mode == "initial" else "info"
-
 page_header(
     title="Import",
     subtitle="Charger le fichier CSV de l'API",
     badge=_badge,
-    badge_type=_badge_type,
 )
 
 # ─── Sidebar info ─────────────────────────────────────────────────────────────
-with st.sidebar:
-    st.markdown(
-        f'<div style="font-size:11px;color:var(--c-sidebar-text);padding:8px 16px">'
-        f'Environnement : <strong style="color:var(--c-cyan)">'
-        f'{get_active_env().upper()}</strong></div>',
-        unsafe_allow_html=True,
-    )
+st.sidebar.caption(f"Environnement : **{get_active_env().upper()}**")
 
 # ═══════════════════════════════════════════════════════════════
 # ÉTAPE 0 — Sélection du mode
 # ═══════════════════════════════════════════════════════════════
 
-st.markdown("### Mode d'import")
+with section("Mode d'import"):
+    prev_mode = st.session_state.import_mode
+    selected_mode = import_mode_toggle()
 
-prev_mode = st.session_state.import_mode
-selected_mode = import_mode_toggle()
+    # Si le mode change, on repart de zéro
+    if selected_mode != prev_mode:
+        _reset_from_step(0)
+        st.session_state.import_mode = selected_mode
+        st.rerun()
 
-# Si le mode change, on repart de zéro
-if selected_mode != prev_mode:
-    _reset_from_step(0)
     st.session_state.import_mode = selected_mode
-    st.rerun()
 
-st.session_state.import_mode = selected_mode
-
-# Note explicative selon le mode
-if selected_mode == "initial":
-    alert(
-        message=(
-            "Le fichier historique complet contient déjà les champs "
-            "<strong>catégorie interne</strong>, <strong>sous-catégorie</strong> "
-            "et <strong>photo</strong>. Ils seront importés tels quels."
-        ),
-        type="info",
-        title="Import initial (one-shot)",
-    )
-else:
-    alert(
-        message=(
-            "Les champs <strong>catégorie</strong>, <strong>sous-catégorie</strong> "
-            "et <strong>photo</strong> seront <strong>NULL</strong> à l'import. "
-            "Utilisez le module <strong>Matching catégories</strong> pour les compléter."
-        ),
-        type="info",
-        title="Import périodique courant",
-    )
-
-st.divider()
+    # Note explicative selon le mode
+    if selected_mode == "initial":
+        alert(
+            message=(
+                "Le fichier historique complet contient déjà les champs "
+                "**catégorie interne**, **sous-catégorie** "
+                "et **photo**. Ils seront importés tels quels."
+            ),
+            type="info",
+            title="Import initial (one-shot)",
+        )
+    else:
+        alert(
+            message=(
+                "Les champs **catégorie**, **sous-catégorie** "
+                "et **photo** seront **vides** à l'import. "
+                "Utilisez le module **Matching catégories** pour les compléter."
+            ),
+            type="info",
+            title="Import périodique courant",
+        )
 
 # ═══════════════════════════════════════════════════════════════
 # ÉTAPE 1 — Upload et contrôle anti-doublon
 # ═══════════════════════════════════════════════════════════════
 
-st.markdown("### 1 — Fichier CSV")
+with section("1. Fichier CSV"):
+    _SOURCE_EXPORT = "Depuis un export validé (recommandé)"
+    _SOURCE_UPLOAD = "Déposer un fichier CSV"
 
-_SOURCE_EXPORT = "Depuis un export validé (recommandé)"
-_SOURCE_UPLOAD = "Déposer un fichier CSV"
-
-_choix_source = st.radio(
-    "Source du fichier",
-    [_SOURCE_EXPORT, _SOURCE_UPLOAD],
-    horizontal=True,
-    key="source_choice",
-)
-_source = "export" if _choix_source == _SOURCE_EXPORT else "upload"
-if _source != st.session_state.source:
-    _reset_from_step(1)
-    st.session_state.export_choisi = None
-    st.session_state.source = _source
-
-
-def _fmt(value) -> str:
-    return value.strftime("%d/%m/%Y à %H:%M") if hasattr(value, "strftime") else str(value or "")
-
-
-def _controle_anti_doublon(fhash: str, nom: str) -> None:
-    """Contrôle anti-doublon (même ``file_hash``), commun aux deux sources.
-    Arrête la page (``st.stop()``) si l'import doit rester bloqué."""
-    try:
-        with get_connection() as conn:
-            existing_log = is_file_already_imported(conn, fhash)
-    except Exception as exc:
-        alert(f"Erreur de connexion à la base : {exc}", type="error")
-        st.stop()
-
-    # L'import que cette session vient elle-même de lancer n'est pas un
-    # doublon : sans ce garde-fou, le rechargement qui suit un import réussi
-    # trouvait ce même import en base et masquait le résumé (étape 4).
-    if existing_log and str(existing_log.get("id")) == str(st.session_state.batch_id or ""):
-        existing_log = None
-
-    if existing_log:
-        status = existing_log.get("status")
-
-        # 'running' est ambigu : import réellement en cours, ou tentative
-        # interrompue (crash) qui n'a jamais atteint son statut final. Sans
-        # timestamp de dernière activité, on tranche sur l'ancienneté de
-        # started_at (cf. _RUNNING_STALE_MINUTES) plutôt que de bloquer
-        # indéfiniment un fichier sur la base d'un import mort.
-        if status == "running":
-            started_at_raw = existing_log.get("started_at")
-            is_stale = True
-            if getattr(started_at_raw, "tzinfo", None) is not None:
-                age = datetime.now(timezone.utc) - started_at_raw
-                is_stale = age.total_seconds() > _RUNNING_STALE_MINUTES * 60
-            if not is_stale:
-                hash_check("dupe-running")
-                alert(
-                    f"Un import de ce fichier a démarré le "
-                    f"<strong>{_fmt(started_at_raw)}</strong> et semble "
-                    f"encore actif (moins de {_RUNNING_STALE_MINUTES} min). "
-                    "Patientez qu'il se termine avant de relancer, pour "
-                    "éviter un double import concurrent.",
-                    type="warning",
-                    title=f"Import déjà en cours — {existing_log.get('filename', nom)}",
-                )
-                st.stop()
-            status = "running"  # traité comme "probablement interrompu" ci-dessous
-
-        blocking = previous_import_alert(
-            filename=existing_log.get("filename", nom),
-            status=status,
-            started_at=_fmt(existing_log.get("started_at")),
-            finished_at=_fmt(existing_log.get("finished_at")),
-            rows_inserted=existing_log.get("rows_inserted") or 0,
-            rows_total=existing_log.get("rows_total") or 0,
-            batch_id=str(existing_log.get("id", "")),
-        )
-
-        if blocking:
-            hash_check("dupe-success")
-            st.stop()
-        else:
-            hash_check("dupe-issue")
-            st.session_state.step = max(st.session_state.step, 1)
-    else:
-        hash_check("ok")
-        st.session_state.step = max(st.session_state.step, 1)
-
-
-# ── Source 1 : export validé d'api-explorer (lot 1B) ──────────────────────────
-# Le fichier plat déjà validé est lu dans Supabase Storage : même fichier que
-# celui qu'on téléchargeait puis redéposait, sans l'étape manuelle. Le
-# contrôle anti-doublon se fait AVANT le téléchargement (l'empreinte est
-# connue d'avance via bulk_export.files.sha256), le téléchargement vérifie
-# ensuite que le fichier reçu a bien cette empreinte.
-
-def _choisir_export(export_id: str) -> None:
-    if export_id != st.session_state.export_choisi:
-        _reset_from_step(1)
-        st.session_state.export_choisi = export_id
-
-
-def _ligne_export(e) -> None:
-    deja = e.dernier_import is not None and e.dernier_import.get("status") == "success"
-    lignes = f"{e.rows_count:,} lignes" if e.rows_count is not None else "lignes : ?"
-    taille = f" · {e.size_bytes / 1_048_576:,.1f} Mo" if e.size_bytes else ""
-    style = ' style="opacity:.45"' if deja else ""
-    col_txt, col_btn = st.columns([5, 1])
-    with col_txt:
-        st.markdown(
-            f"<div{style}><strong>{html.escape(e.name)}</strong><br>"
-            f"<small>Terminé le {_fmt(e.finished_at)} · {lignes}{taille} · "
-            f"<code>{html.escape(e.export_id)}</code></small></div>",
-            unsafe_allow_html=True,
-        )
-        if deja:
-            st.caption(
-                f"✅ Déjà importé avec succès le {_fmt(e.dernier_import.get('finished_at') or e.dernier_import.get('started_at'))}. "
-                "Relancer l'import réinsérerait les mêmes lignes pour rien — "
-                "c'est pour ça qu'il est bloqué, pas parce qu'il y a un problème."
-            )
-    with col_btn:
-        st.button(
-            "Choisi" if e.export_id == st.session_state.export_choisi else "Choisir",
-            key=f"choisir_{e.export_id}",
-            disabled=deja,
-            type="primary" if e.export_id == st.session_state.export_choisi else "secondary",
-            on_click=_choisir_export,
-            args=(e.export_id,),
-        )
-
-
-if _source == "export":
-    try:
-        with get_connection() as conn:
-            _exports = lister_exports(conn)
-    except ExportSourceError as exc:
-        alert(str(exc), type="error", title="Exports indisponibles")
-        st.stop()
-    except Exception as exc:
-        alert(f"Erreur de connexion à la base : {exc}", type="error")
-        st.stop()
-
-    if not _exports:
-        hash_check("idle")
-        alert(
-            "Aucun export validé disponible. Il faut un export api-explorer "
-            "terminé (COMPLETED), produit avec le format « plat », dont les "
-            "fichiers n'ont pas expiré.",
-            type="info",
-        )
-        st.stop()
-
-    for _e in _exports:
-        _ligne_export(_e)
-
-    _choisi = next((e for e in _exports if e.export_id == st.session_state.export_choisi), None)
-    if _choisi is None:
-        hash_check("idle")
-        st.stop()
-
-    st.session_state.file_hash = _choisi.sha256
-    _controle_anti_doublon(_choisi.sha256, _choisi.filename_compass)
-
-    # Après l'import, le fichier temporaire est supprimé : ne pas le retélécharger.
-    if not st.session_state.import_done and not (
-        st.session_state.file_path and Path(st.session_state.file_path).exists()
-    ):
-        _dossier = Path(tempfile.gettempdir()) / "compass_exports"
-        _dossier.mkdir(exist_ok=True)
-        nettoyer_dossier_temp(_dossier)
-        _taille = f" ({_choisi.size_bytes / 1_048_576:,.0f} Mo)" if _choisi.size_bytes else ""
-        with st.spinner(f"Téléchargement et vérification de l'export{_taille}…"):
-            try:
-                _chemin = telecharger(_choisi.path, _choisi.sha256, _dossier)
-            except ExportSourceError as exc:
-                alert(str(exc), type="error", title="Téléchargement refusé")
-                st.stop()
-        logger.info("Export %s téléchargé et vérifié (%s)", _choisi.export_id, _chemin)
-        st.session_state.file_path        = str(_chemin)
-        st.session_state.file_name        = _choisi.filename_compass
-        st.session_state.source_export_id = _choisi.export_id
-        st.session_state.rows_count_exact = _choisi.rows_count
-
-# ── Source 2 : dépôt manuel d'un fichier CSV (parcours historique) ─────────────
-else:
-    uploaded = st.file_uploader(
-        "Déposer le fichier CSV Semantiweb",
-        type=["csv"],
-        help="Encodage UTF-8 BOM, séparateur point-virgule (;)",
-        key="csv_uploader",
+    _choix_source = st.segmented_control(
+        "Source du fichier",
+        [_SOURCE_EXPORT, _SOURCE_UPLOAD],
+        default=_SOURCE_EXPORT,
+        required=True,
+        key="source_choice",
     )
+    _source = "export" if _choix_source == _SOURCE_EXPORT else "upload"
+    if _source != st.session_state.source:
+        _reset_from_step(1)
+        st.session_state.export_choisi = None
+        st.session_state.source = _source
 
-    if uploaded is not None:
-        file_bytes = uploaded.read()
-        fhash = compute_file_hash(file_bytes)
 
-        # Nouveau fichier (ou changement de fichier)
-        if fhash != st.session_state.file_hash:
+    def _md(texte: str) -> str:
+        """Texte venant des données, affiché tel quel dans du Markdown."""
+        return "".join("\\" + c if c in "\\`*_[]<>#|$~" else c for c in str(texte))
+
+
+    def _fmt(value) -> str:
+        return value.strftime("%d/%m/%Y à %H:%M") if hasattr(value, "strftime") else str(value or "")
+
+
+    def _controle_anti_doublon(fhash: str, nom: str) -> None:
+        """Contrôle anti-doublon (même ``file_hash``), commun aux deux sources.
+        Arrête la page (``st.stop()``) si l'import doit rester bloqué."""
+        try:
+            with get_connection() as conn:
+                existing_log = is_file_already_imported(conn, fhash)
+        except Exception as exc:
+            alert(f"Erreur de connexion à la base : {exc}", type="error")
+            st.stop()
+
+        # L'import que cette session vient elle-même de lancer n'est pas un
+        # doublon : sans ce garde-fou, le rechargement qui suit un import réussi
+        # trouvait ce même import en base et masquait le résumé (étape 4).
+        if existing_log and str(existing_log.get("id")) == str(st.session_state.batch_id or ""):
+            existing_log = None
+
+        if existing_log:
+            status = existing_log.get("status")
+
+            # 'running' est ambigu : import réellement en cours, ou tentative
+            # interrompue (crash) qui n'a jamais atteint son statut final. Sans
+            # timestamp de dernière activité, on tranche sur l'ancienneté de
+            # started_at (cf. _RUNNING_STALE_MINUTES) plutôt que de bloquer
+            # indéfiniment un fichier sur la base d'un import mort.
+            if status == "running":
+                started_at_raw = existing_log.get("started_at")
+                is_stale = True
+                if getattr(started_at_raw, "tzinfo", None) is not None:
+                    age = datetime.now(timezone.utc) - started_at_raw
+                    is_stale = age.total_seconds() > _RUNNING_STALE_MINUTES * 60
+                if not is_stale:
+                    hash_check("dupe-running")
+                    alert(
+                        f"Un import de ce fichier a démarré le "
+                        f"**{_fmt(started_at_raw)}** et semble "
+                        f"encore actif (moins de {_RUNNING_STALE_MINUTES} min). "
+                        "Patientez qu'il se termine avant de relancer, pour "
+                        "éviter un double import concurrent.",
+                        type="warning",
+                        title=f"Import déjà en cours — {existing_log.get('filename', nom)}",
+                    )
+                    st.stop()
+                status = "running"  # traité comme "probablement interrompu" ci-dessous
+
+            blocking = previous_import_alert(
+                filename=existing_log.get("filename", nom),
+                status=status,
+                started_at=_fmt(existing_log.get("started_at")),
+                finished_at=_fmt(existing_log.get("finished_at")),
+                rows_inserted=existing_log.get("rows_inserted") or 0,
+                rows_total=existing_log.get("rows_total") or 0,
+                batch_id=str(existing_log.get("id", "")),
+            )
+
+            if blocking:
+                hash_check("dupe-success")
+                st.stop()
+            else:
+                hash_check("dupe-issue")
+                st.session_state.step = max(st.session_state.step, 1)
+        else:
+            hash_check("ok")
+            st.session_state.step = max(st.session_state.step, 1)
+
+
+    # ── Source 1 : export validé d'api-explorer (lot 1B) ──────────────────────────
+    # Le fichier plat déjà validé est lu dans Supabase Storage : même fichier que
+    # celui qu'on téléchargeait puis redéposait, sans l'étape manuelle. Le
+    # contrôle anti-doublon se fait AVANT le téléchargement (l'empreinte est
+    # connue d'avance via bulk_export.files.sha256), le téléchargement vérifie
+    # ensuite que le fichier reçu a bien cette empreinte.
+
+    def _choisir_export(export_id: str) -> None:
+        if export_id != st.session_state.export_choisi:
             _reset_from_step(1)
-            st.session_state.file_hash  = fhash
-            st.session_state.file_bytes = file_bytes
-            st.session_state.file_name  = uploaded.name
+            st.session_state.export_choisi = export_id
 
-        _controle_anti_doublon(fhash, uploaded.name)
 
+    def _ligne_export(e) -> None:
+        deja = e.dernier_import is not None and e.dernier_import.get("status") == "success"
+        lignes = f"{nombre(e.rows_count)} lignes" if e.rows_count is not None else "lignes : ?"
+        taille = f" · {e.size_bytes / 1_048_576:.1f} Mo".replace(".", ",") if e.size_bytes else ""
+        col_txt, col_btn = st.columns([5, 1], vertical_alignment="center")
+        with col_txt:
+            st.markdown(f"**{_md(e.name)}**")
+            st.caption(f"Terminé le {_fmt(e.finished_at)} · {lignes}{taille} · `{e.export_id}`")
+            if deja:
+                st.markdown(
+                    ":green-badge[:material/check_circle: Déjà importé avec succès le "
+                    f"{_fmt(e.dernier_import.get('finished_at') or e.dernier_import.get('started_at'))}]"
+                )
+                st.caption(
+                    "Relancer l'import réinsérerait les mêmes lignes pour rien — "
+                    "c'est pour ça qu'il est bloqué, pas parce qu'il y a un problème."
+                )
+        with col_btn:
+            st.button(
+                "Export choisi" if e.export_id == st.session_state.export_choisi else "Choisir",
+                key=f"choisir_{e.export_id}",
+                disabled=deja,
+                type="primary" if e.export_id == st.session_state.export_choisi else "secondary",
+                on_click=_choisir_export,
+                args=(e.export_id,),
+            )
+
+
+    if _source == "export":
+        try:
+            with get_connection() as conn:
+                _exports = lister_exports(conn)
+        except ExportSourceError as exc:
+            alert(str(exc), type="error", title="Exports indisponibles")
+            st.stop()
+        except Exception as exc:
+            alert(f"Erreur de connexion à la base : {exc}", type="error")
+            st.stop()
+
+        if not _exports:
+            hash_check("idle")
+            alert(
+                "Aucun export validé disponible. Il faut un export api-explorer "
+                "terminé, produit avec le format « plat », dont les "
+                "fichiers n'ont pas expiré.",
+                type="info",
+            )
+            st.stop()
+
+        for _e in _exports:
+            _ligne_export(_e)
+
+        _choisi = next((e for e in _exports if e.export_id == st.session_state.export_choisi), None)
+        if _choisi is None:
+            hash_check("idle")
+            st.stop()
+
+        st.session_state.file_hash = _choisi.sha256
+        _controle_anti_doublon(_choisi.sha256, _choisi.filename_compass)
+
+        # Après l'import, le fichier temporaire est supprimé : ne pas le retélécharger.
+        if not st.session_state.import_done and not (
+            st.session_state.file_path and Path(st.session_state.file_path).exists()
+        ):
+            _dossier = Path(tempfile.gettempdir()) / "compass_exports"
+            _dossier.mkdir(exist_ok=True)
+            nettoyer_dossier_temp(_dossier)
+            _taille = f" ({nombre(round(_choisi.size_bytes / 1_048_576))} Mo)" if _choisi.size_bytes else ""
+            with st.spinner(f"Téléchargement et vérification de l'export{_taille}…"):
+                try:
+                    _chemin = telecharger(_choisi.path, _choisi.sha256, _dossier)
+                except ExportSourceError as exc:
+                    alert(str(exc), type="error", title="Téléchargement refusé")
+                    st.stop()
+            logger.info("Export %s téléchargé et vérifié (%s)", _choisi.export_id, _chemin)
+            st.session_state.file_path        = str(_chemin)
+            st.session_state.file_name        = _choisi.filename_compass
+            st.session_state.source_export_id = _choisi.export_id
+            st.session_state.rows_count_exact = _choisi.rows_count
+
+    # ── Source 2 : dépôt manuel d'un fichier CSV (parcours historique) ─────────────
     else:
-        hash_check("idle")
-        # Pas de fichier → on s'arrête ici
-        st.stop()
+        uploaded = st.file_uploader(
+            "Déposer le fichier CSV Semantiweb",
+            type=["csv"],
+            help="Encodage UTF-8 BOM, séparateur point-virgule (;)",
+            key="csv_uploader",
+        )
 
-st.divider()
+        if uploaded is not None:
+            file_bytes = uploaded.read()
+            fhash = compute_file_hash(file_bytes)
+
+            # Nouveau fichier (ou changement de fichier)
+            if fhash != st.session_state.file_hash:
+                _reset_from_step(1)
+                st.session_state.file_hash  = fhash
+                st.session_state.file_bytes = file_bytes
+                st.session_state.file_name  = uploaded.name
+
+            _controle_anti_doublon(fhash, uploaded.name)
+
+        else:
+            hash_check("idle")
+            # Pas de fichier → on s'arrête ici
+            st.stop()
 
 # ═══════════════════════════════════════════════════════════════
 # ÉTAPE 2 — Validation et aperçu
 # ═══════════════════════════════════════════════════════════════
 
-steps(["Upload", "Validation", "Import", "Résumé"], current=1)
+with section("2. Vérification du fichier"):
+    steps(_ETAPES, current=1)
 
-# Aperçu LÉGER : seulement les 5 premières lignes + une estimation du total
-# (comptage de sauts de ligne), jamais un chargement complet du fichier —
-# un fichier de plusieurs centaines de milliers de lignes ne doit pas être
-# entièrement parsé juste pour afficher un aperçu avant même de cliquer
-# "Lancer l'import".
-if st.session_state.preview_df is None:
-    try:
-        _source_csv = st.session_state.file_path or st.session_state.file_bytes
-        preview_df, total_rows_est = preview_csv(_source_csv, n=5)
-        # Export validé : nombre de lignes exact connu d'api-explorer (le
-        # comptage des sauts de ligne surestime dès qu'un verbatim en contient).
-        if st.session_state.rows_count_exact is not None:
-            total_rows_est = st.session_state.rows_count_exact
-        st.session_state.preview_df         = preview_df
-        st.session_state.preview_total_rows = total_rows_est
-    except ValueError as exc:
-        alert(str(exc), type="error", title="Fichier invalide")
+    # Aperçu LÉGER : seulement les 5 premières lignes + une estimation du total
+    # (comptage de sauts de ligne), jamais un chargement complet du fichier —
+    # un fichier de plusieurs centaines de milliers de lignes ne doit pas être
+    # entièrement parsé juste pour afficher un aperçu avant même de cliquer
+    # "Lancer l'import".
+    if st.session_state.preview_df is None:
+        try:
+            _source_csv = st.session_state.file_path or st.session_state.file_bytes
+            preview_df, total_rows_est = preview_csv(_source_csv, n=5)
+            # Export validé : nombre de lignes exact connu d'api-explorer (le
+            # comptage des sauts de ligne surestime dès qu'un verbatim en contient).
+            if st.session_state.rows_count_exact is not None:
+                total_rows_est = st.session_state.rows_count_exact
+            st.session_state.preview_df         = preview_df
+            st.session_state.preview_total_rows = total_rows_est
+        except ValueError as exc:
+            alert(str(exc), type="error", title="Fichier invalide")
+            st.stop()
+        except Exception as exc:
+            alert(f"Erreur inattendue lors de la lecture : {exc}", type="error")
+            st.stop()
+
+    preview_df = st.session_state.preview_df
+    total_rows_est = st.session_state.preview_total_rows
+
+    col_info, col_preview = st.columns([1, 3])
+    with col_info:
+        st.metric(
+            "Lignes (export validé)" if st.session_state.rows_count_exact is not None
+            else "Lignes détectées (estimation)",
+            nombre(total_rows_est),
+            border=True,
+        )
+        st.metric("Colonnes", len(preview_df.columns), border=True)
+        st.caption(f"Fichier : `{st.session_state.file_name}`")
+
+    with col_preview:
+        st.subheader("Aperçu des 5 premières lignes", anchor=False)
+        st.dataframe(preview_df.head(5), hide_index=True, height=200)
+
+    # Bouton de lancement — désactivé si l'import est déjà terminé
+    if not st.session_state.import_done:
+        if st.button("Lancer l'import", type="primary", icon=":material/play_arrow:"):
+            st.session_state.step = 2
+            st.rerun()
+
+    if st.session_state.step < 2:
         st.stop()
-    except Exception as exc:
-        alert(f"Erreur inattendue lors de la lecture : {exc}", type="error")
-        st.stop()
-
-preview_df = st.session_state.preview_df
-total_rows_est = st.session_state.preview_total_rows
-
-col_info, col_preview = st.columns([1, 3])
-with col_info:
-    st.metric(
-        "Lignes (export validé)" if st.session_state.rows_count_exact is not None
-        else "Lignes détectées (estimation)",
-        f"{total_rows_est:,}",
-    )
-    st.metric("Colonnes", len(preview_df.columns))
-    st.caption(f"Fichier : `{st.session_state.file_name}`")
-
-with col_preview:
-    st.markdown("**Aperçu — 5 premières lignes**")
-    st.dataframe(preview_df.head(5), use_container_width=True, height=200)
-
-st.markdown("")
-
-# Bouton de lancement — désactivé si l'import est déjà terminé
-if not st.session_state.import_done:
-    if st.button("Lancer l'import →", type="primary", use_container_width=False):
-        st.session_state.step = 2
-        st.rerun()
-
-if st.session_state.step < 2:
-    st.stop()
-
-st.divider()
 
 # ═══════════════════════════════════════════════════════════════
 # ÉTAPE 3 — Import par batches
 # ═══════════════════════════════════════════════════════════════
 
-steps(["Upload", "Validation", "Import", "Résumé"], current=2)
+with section("3. Import"):
+    steps(_ETAPES, current=2)
 
 
-class _SkipAccumulator:
-    """Accumule les lignes ignorées SANS jamais garder plus de
-    ``max_details`` entrées complètes en mémoire — même si la totalité
-    d'un fichier de 190 000 lignes s'avérait invalide. Les totaux et la
-    ventilation par code restent exacts (ce sont de simples compteurs,
-    coût mémoire négligeable) ; seul le détail conservé pour l'affichage
-    et l'export CSV est plafonné, exactement comme le fait déjà
-    ``core.skip_report.build_error_detail`` au moment de la sérialisation
-    — la différence ici est que le plafond est appliqué DÈS
-    l'accumulation, pas seulement à la fin.
-    """
+    class _SkipAccumulator:
+        """Accumule les lignes ignorées SANS jamais garder plus de
+        ``max_details`` entrées complètes en mémoire — même si la totalité
+        d'un fichier de 190 000 lignes s'avérait invalide. Les totaux et la
+        ventilation par code restent exacts (ce sont de simples compteurs,
+        coût mémoire négligeable) ; seul le détail conservé pour l'affichage
+        et l'export CSV est plafonné, exactement comme le fait déjà
+        ``core.skip_report.build_error_detail`` au moment de la sérialisation
+        — la différence ici est que le plafond est appliqué DÈS
+        l'accumulation, pas seulement à la fin.
+        """
 
-    def __init__(self, max_details: int):
-        self._max_details = max_details
-        self.details: list[dict] = []
-        self.codes: Counter = Counter()
-        self.total = 0
+        def __init__(self, max_details: int):
+            self._max_details = max_details
+            self.details: list[dict] = []
+            self.codes: Counter = Counter()
+            self.total = 0
 
-    def extend(self, entries: list[dict]) -> None:
-        for entry in entries:
-            self.total += 1
-            self.codes[entry.get("code") or "INCONNU"] += 1
-            if len(self.details) < self._max_details:
-                self.details.append(entry)
+        def extend(self, entries: list[dict]) -> None:
+            for entry in entries:
+                self.total += 1
+                self.codes[entry.get("code") or "INCONNU"] += 1
+                if len(self.details) < self._max_details:
+                    self.details.append(entry)
 
 
-if not st.session_state.import_done:
+    if not st.session_state.import_done:
 
-    batch_id       = str(uuid.uuid4())
-    mode           = st.session_state.import_mode
-    fhash          = st.session_state.file_hash
-    fname          = st.session_state.file_name
-    source_csv     = st.session_state.file_path or st.session_state.file_bytes
-    source_export_id = st.session_state.source_export_id
-    total_rows_est = st.session_state.preview_total_rows or 1  # évite /0 dans le %
+        batch_id       = str(uuid.uuid4())
+        mode           = st.session_state.import_mode
+        fhash          = st.session_state.file_hash
+        fname          = st.session_state.file_name
+        source_csv     = st.session_state.file_path or st.session_state.file_bytes
+        source_export_id = st.session_state.source_export_id
+        total_rows_est = st.session_state.preview_total_rows or 1  # évite /0 dans le %
 
-    st.session_state.batch_id = batch_id
+        st.session_state.batch_id = batch_id
 
-    _import_cfg      = load_import_settings()
-    CHUNK_SIZE        = _import_cfg.get("batch_size", 1000)
-    MAX_SKIP_DETAILS  = _import_cfg.get("max_skip_details", 500)
+        _import_cfg      = load_import_settings()
+        CHUNK_SIZE        = _import_cfg.get("batch_size", 1000)
+        MAX_SKIP_DETAILS  = _import_cfg.get("max_skip_details", 500)
 
-    skip_acc          = _SkipAccumulator(MAX_SKIP_DETAILS)
-    total_inserted     = 0
-    total_duplicates   = 0
-    total_seen          = 0
-    pre_matched_count   = 0
-    all_errors: list[str] = []
-    last_logged_at       = 0
+        skip_acc          = _SkipAccumulator(MAX_SKIP_DETAILS)
+        total_inserted     = 0
+        total_duplicates   = 0
+        total_seen          = 0
+        pre_matched_count   = 0
+        all_errors: list[str] = []
+        last_logged_at       = 0
 
-    # Placeholder pour la barre de progression
-    progress_placeholder = st.empty()
+        # Placeholder pour la barre de progression
+        progress_placeholder = st.empty()
 
-    def _running_stats() -> dict:
-        """Totaux courants — utilisée pour les mises à jour incrémentales
-        ET pour le bilan final, afin qu'un crash en cours de route et une
-        fin normale produisent des chiffres calculés de la même façon."""
-        rows_unmatched = max(0, total_inserted - pre_matched_count)
-        return {
-            "rows_total":  total_seen,
-            "inserted":    total_inserted,
-            "skipped":     skip_acc.total,
-            "duplicates":  total_duplicates,
-            "matched":     total_inserted - rows_unmatched,
-            "unmatched":   rows_unmatched,
-        }
+        def _running_stats() -> dict:
+            """Totaux courants — utilisée pour les mises à jour incrémentales
+            ET pour le bilan final, afin qu'un crash en cours de route et une
+            fin normale produisent des chiffres calculés de la même façon."""
+            rows_unmatched = max(0, total_inserted - pre_matched_count)
+            return {
+                "rows_total":  total_seen,
+                "inserted":    total_inserted,
+                "skipped":     skip_acc.total,
+                "duplicates":  total_duplicates,
+                "matched":     total_inserted - rows_unmatched,
+                "unmatched":   rows_unmatched,
+            }
 
-    def _running_error_payload() -> dict | None:
-        return build_error_detail(
-            skip_acc.details,
-            all_errors,
-            max_skip_details=MAX_SKIP_DETAILS,
-            skips_total=skip_acc.total,
-            skips_par_code=dict(skip_acc.codes),
-        )
+        def _running_error_payload() -> dict | None:
+            return build_error_detail(
+                skip_acc.details,
+                all_errors,
+                max_skip_details=MAX_SKIP_DETAILS,
+                skips_total=skip_acc.total,
+                skips_par_code=dict(skip_acc.codes),
+            )
 
-    t_start = time.time()
+        t_start = time.time()
 
-    try:
-        # ── Créer le log d'import (rows_total = estimation, corrigée au fil de l'eau) ──
-        with get_connection() as conn:
-            _log_insert(conn, batch_id, fhash, fname, mode, total_rows_est,
-                        source_export_id)
+        try:
+            # ── Créer le log d'import (rows_total = estimation, corrigée au fil de l'eau) ──
+            with get_connection() as conn:
+                _log_insert(conn, batch_id, fhash, fname, mode, total_rows_est,
+                            source_export_id)
 
-        logger.info(
-            "Import %s démarré — fichier=%s mode=%s ~%d ligne(s) (estimation)",
-            batch_id, fname, mode, total_rows_est,
-        )
+            logger.info(
+                "Import %s démarré — fichier=%s mode=%s ~%d ligne(s) (estimation)",
+                batch_id, fname, mode, total_rows_est,
+            )
 
-        # ── Boucle streaming : un chunk à la fois, jamais le fichier entier ──
-        # C'est le cœur du correctif OOM : chunk_df et rows ne contiennent
-        # jamais plus de CHUNK_SIZE lignes, quelle que soit la taille totale
-        # du fichier (189 824 lignes en production). apply_known_categories
-        # et import_batch opèrent aussi chunk par chunk — comme avant pour
-        # import_batch, mais désormais aussi pour la normalisation et
-        # l'enrichissement catégories, qui construisaient auparavant une
-        # liste Python de TOUTES les lignes avant le premier INSERT.
-        chunks, bad_lines = iter_csv_chunks(source_csv, chunksize=CHUNK_SIZE)
+            # ── Boucle streaming : un chunk à la fois, jamais le fichier entier ──
+            # C'est le cœur du correctif OOM : chunk_df et rows ne contiennent
+            # jamais plus de CHUNK_SIZE lignes, quelle que soit la taille totale
+            # du fichier (189 824 lignes en production). apply_known_categories
+            # et import_batch opèrent aussi chunk par chunk — comme avant pour
+            # import_batch, mais désormais aussi pour la normalisation et
+            # l'enrichissement catégories, qui construisaient auparavant une
+            # liste Python de TOUTES les lignes avant le premier INSERT.
+            chunks, bad_lines = iter_csv_chunks(source_csv, chunksize=CHUNK_SIZE)
 
-        with get_connection() as conn:
-            for chunk_num, chunk_df in enumerate(chunks, start=1):
-                chunk_len = len(chunk_df)
+            with get_connection() as conn:
+                for chunk_num, chunk_df in enumerate(chunks, start=1):
+                    chunk_len = len(chunk_df)
 
-                rows, chunk_skips, _chunk_codes = normalize_batch(chunk_df, mode)
-                skip_acc.extend(chunk_skips)
+                    rows, chunk_skips, _chunk_codes = normalize_batch(chunk_df, mode)
+                    skip_acc.extend(chunk_skips)
 
-                try:
-                    rows = apply_known_categories(conn, rows)
-                except Exception as exc:
-                    logger.warning(
-                        "Enrichissement catégories impossible (chunk %d, batch %s) : %s",
-                        chunk_num, batch_id, exc,
+                    try:
+                        rows = apply_known_categories(conn, rows)
+                    except Exception as exc:
+                        logger.warning(
+                            "Enrichissement catégories impossible (chunk %d, batch %s) : %s",
+                            chunk_num, batch_id, exc,
+                        )
+
+                    pre_matched_count += sum(
+                        1 for r in rows if r.get("categorie_interne") is not None
                     )
 
-                pre_matched_count += sum(
-                    1 for r in rows if r.get("categorie_interne") is not None
-                )
+                    result = import_batch(conn, rows, batch_id)
+                    total_inserted   += result["inserted"]
+                    total_duplicates += result["duplicates"]
+                    all_errors.extend(result["errors"])
 
-                result = import_batch(conn, rows, batch_id)
-                total_inserted   += result["inserted"]
-                total_duplicates += result["duplicates"]
-                all_errors.extend(result["errors"])
+                    total_seen += chunk_len
+                    del rows, chunk_df  # libère explicitement la mémoire du chunk traité
 
-                total_seen += chunk_len
-                del rows, chunk_df  # libère explicitement la mémoire du chunk traité
+                    # ── Barre de progression (UI) ────────────────────────────────
+                    pct = min(100, int(total_seen / total_rows_est * 100))
+                    with progress_placeholder.container():
+                        progress_block(
+                            title="Import en cours…",
+                            subtitle=(
+                                f"{nombre(total_seen)} ligne(s) traitée(s) "
+                                f"sur environ {nombre(total_rows_est)} — lot {chunk_num}"
+                            ),
+                            percent=pct,
+                        )
 
-                # ── Barre de progression (UI) ────────────────────────────────
-                pct = min(100, int(total_seen / total_rows_est * 100))
-                with progress_placeholder.container():
-                    progress_block(
-                        title="Import en cours…",
-                        subtitle=(
-                            f"Traitement de {total_seen:,} ligne(s) "
-                            f"(~{total_rows_est:,} au total) — chunk {chunk_num}"
-                        ),
-                        percent=pct,
-                    )
+                    # ── Log de progression serveur (visible dans Streamlit Cloud) ──
+                    if total_seen - last_logged_at >= _PROGRESS_LOG_EVERY:
+                        logger.info(
+                            "Import %s : %d ligne(s) traitées — %d inséré(s), "
+                            "%d doublon(s), %d ignorée(s)",
+                            batch_id, total_seen, total_inserted,
+                            total_duplicates, skip_acc.total,
+                        )
+                        last_logged_at = total_seen
 
-                # ── Log de progression serveur (visible dans Streamlit Cloud) ──
-                if total_seen - last_logged_at >= _PROGRESS_LOG_EVERY:
-                    logger.info(
-                        "Import %s : %d ligne(s) traitées — %d inséré(s), "
-                        "%d doublon(s), %d ignorée(s)",
-                        batch_id, total_seen, total_inserted,
-                        total_duplicates, skip_acc.total,
-                    )
-                    last_logged_at = total_seen
+                    # ── Persistance incrémentale ──────────────────────────────────
+                    # Après CHAQUE chunk, pas seulement à la fin : si le process
+                    # est tué (OOM) avant le prochain chunk, import_logs reflète
+                    # déjà la progression et les erreurs réelles au lieu de
+                    # rester bloqué à zéro — consultable dans Outils / Logs même
+                    # après un crash partiel.
+                    try:
+                        _log_progress(
+                            conn, batch_id, _running_stats(), "running",
+                            _running_error_payload(), final=False,
+                        )
+                    except Exception as exc:
+                        logger.error(
+                            "Échec de la mise à jour incrémentale du log "
+                            "(chunk %d, batch %s) : %s", chunk_num, batch_id, exc,
+                            exc_info=True,
+                        )
 
-                # ── Persistance incrémentale ──────────────────────────────────
-                # Après CHAQUE chunk, pas seulement à la fin : si le process
-                # est tué (OOM) avant le prochain chunk, import_logs reflète
-                # déjà la progression et les erreurs réelles au lieu de
-                # rester bloqué à zéro — consultable dans Outils / Logs même
-                # après un crash partiel.
-                try:
+            # ── Bad lines détectées pendant le streaming (complètes seulement
+            # maintenant que l'itérateur est épuisé) ────────────────────────────
+            skip_acc.extend(bad_lines)
+
+            t_elapsed = int(time.time() - t_start)
+
+            final_stats  = _running_stats()
+            final_stats["errors"] = all_errors
+            final_status = (
+                "success" if not all_errors
+                else "partial" if total_inserted > 0
+                else "error"
+            )
+            error_payload = _running_error_payload()
+            st.session_state.error_detail_payload = error_payload
+
+            # ── Mise à jour finale du log ─────────────────────────────────────────
+            try:
+                with get_connection() as conn:
                     _log_progress(
-                        conn, batch_id, _running_stats(), "running",
-                        _running_error_payload(), final=False,
+                        conn, batch_id, final_stats, final_status,
+                        error_payload, final=True,
                     )
-                except Exception as exc:
-                    logger.error(
-                        "Échec de la mise à jour incrémentale du log "
-                        "(chunk %d, batch %s) : %s", chunk_num, batch_id, exc,
-                        exc_info=True,
-                    )
-
-        # ── Bad lines détectées pendant le streaming (complètes seulement
-        # maintenant que l'itérateur est épuisé) ────────────────────────────
-        skip_acc.extend(bad_lines)
-
-        t_elapsed = int(time.time() - t_start)
-
-        final_stats  = _running_stats()
-        final_stats["errors"] = all_errors
-        final_status = (
-            "success" if not all_errors
-            else "partial" if total_inserted > 0
-            else "error"
-        )
-        error_payload = _running_error_payload()
-        st.session_state.error_detail_payload = error_payload
-
-        # ── Mise à jour finale du log ─────────────────────────────────────────
-        try:
-            with get_connection() as conn:
-                _log_progress(
-                    conn, batch_id, final_stats, final_status,
-                    error_payload, final=True,
+            except Exception as exc:
+                logger.error(
+                    "Échec de la finalisation du log d'import %s : %s",
+                    batch_id, exc, exc_info=True,
                 )
+                alert(
+                    f"L'import a traité {nombre(total_seen)} ligne(s) mais la mise à "
+                    f"jour finale du log a échoué : {exc}\n\n"
+                    "Vérifiez que la migration sql/migrations/"
+                    "0001_hash_et_tracabilite.sql a bien été appliquée sur "
+                    "cette base (colonne rows_duplicates, error_detail en "
+                    "JSONB) — c'est la cause la plus probable si le détail "
+                    "n'apparaît jamais dans Outils / Logs.",
+                    type="error",
+                    title="Log d'import non finalisé",
+                )
+
+            st.session_state.import_stats      = final_stats
+            st.session_state.import_duration_s = t_elapsed
+            st.session_state.import_done       = True
+            _supprimer_fichier_temp()  # le fichier d'export n'est plus utile
+            st.session_state.skip_details      = skip_acc.details
+            st.session_state.step              = 3
+
+            logger.info(
+                "Import %s terminé — %d ligne(s), %d inséré(s), %d doublon(s), "
+                "%d ignorée(s), statut=%s, durée=%ds",
+                batch_id, total_seen, total_inserted, total_duplicates,
+                skip_acc.total, final_status, t_elapsed,
+            )
+
+            progress_placeholder.empty()
+            st.rerun()
+
         except Exception as exc:
-            logger.error(
-                "Échec de la finalisation du log d'import %s : %s",
-                batch_id, exc, exc_info=True,
-            )
-            alert(
-                f"L'import a traité {total_seen:,} ligne(s) mais la mise à "
-                f"jour finale du log a échoué : {exc}\n"
-                "Vérifiez que la migration sql/migrations/"
-                "0001_hash_et_tracabilite.sql a bien été appliquée sur "
-                "cette base (colonne rows_duplicates, error_detail en "
-                "JSONB) — c'est la cause la plus probable si le détail "
-                "n'apparaît jamais dans Outils / Logs.",
-                type="error",
-                title="Log d'import non finalisé",
-            )
-
-        st.session_state.import_stats      = final_stats
-        st.session_state.import_duration_s = t_elapsed
-        st.session_state.import_done       = True
-        _supprimer_fichier_temp()  # le fichier d'export n'est plus utile
-        st.session_state.skip_details      = skip_acc.details
-        st.session_state.step              = 3
-
-        logger.info(
-            "Import %s terminé — %d ligne(s), %d inséré(s), %d doublon(s), "
-            "%d ignorée(s), statut=%s, durée=%ds",
-            batch_id, total_seen, total_inserted, total_duplicates,
-            skip_acc.total, final_status, t_elapsed,
-        )
-
-        progress_placeholder.empty()
-        st.rerun()
-
-    except Exception as exc:
-        # Préserve la progression déjà accumulée au lieu de l'écraser à
-        # zéro — les chunks déjà insérés avant l'exception restent en base
-        # de toute façon (chaque chunk est sa propre transaction commitée
-        # dans import_batch), donc le log doit le refléter.
-        logger.error("Import %s interrompu par une exception : %s", batch_id, exc, exc_info=True)
-        all_errors.append(f"Import interrompu : {exc}")
-        try:
-            with get_connection() as conn:
-                _log_progress(
-                    conn, batch_id, _running_stats(), "error",
-                    _running_error_payload(), final=True,
+            # Préserve la progression déjà accumulée au lieu de l'écraser à
+            # zéro — les chunks déjà insérés avant l'exception restent en base
+            # de toute façon (chaque chunk est sa propre transaction commitée
+            # dans import_batch), donc le log doit le refléter.
+            logger.error("Import %s interrompu par une exception : %s", batch_id, exc, exc_info=True)
+            all_errors.append(f"Import interrompu : {exc}")
+            try:
+                with get_connection() as conn:
+                    _log_progress(
+                        conn, batch_id, _running_stats(), "error",
+                        _running_error_payload(), final=True,
+                    )
+            except Exception as log_exc:
+                logger.error(
+                    "Impossible de marquer le log %s en erreur : %s",
+                    batch_id, log_exc, exc_info=True,
                 )
-        except Exception as log_exc:
-            logger.error(
-                "Impossible de marquer le log %s en erreur : %s",
-                batch_id, log_exc, exc_info=True,
+
+            progress_placeholder.empty()
+            st.session_state.import_error = str(exc)
+            st.session_state.step = 1
+            alert(
+                f"Import échoué après {nombre(total_seen)} ligne(s) traitée(s) : {exc}\n\n"
+                "Les lignes déjà insérées avant l'échec restent en base "
+                "(consultables dans Outils / Logs).",
+                type="error",
+                title="Erreur d'import",
             )
+            st.stop()
 
-        progress_placeholder.empty()
-        st.session_state.import_error = str(exc)
-        st.session_state.step = 1
-        alert(
-            f"Import échoué après {total_seen:,} ligne(s) traitée(s) : {exc}\n"
-            "Les lignes déjà insérées avant l'échec restent en base "
-            "(consultables dans Outils / Logs).",
-            type="error",
-            title="Erreur d'import",
-        )
+    if st.session_state.step < 3:
         st.stop()
-
-if st.session_state.step < 3:
-    st.stop()
-
-st.divider()
 
 # ═══════════════════════════════════════════════════════════════
 # ÉTAPE 4 — Résumé
 # ═══════════════════════════════════════════════════════════════
 
-steps(["Upload", "Validation", "Import", "Résumé"], current=3)
+with section("4. Résumé"):
+    steps(_ETAPES, current=3)
 
-stats    = st.session_state.import_stats or {}
-duration = st.session_state.import_duration_s
+    stats    = st.session_state.import_stats or {}
+    duration = st.session_state.import_duration_s
 
-import_summary(
-    rows_inserted=stats.get("inserted", 0),
-    rows_skipped=stats.get("skipped", 0),
-    rows_matched=stats.get("matched", 0),
-    rows_unmatched=stats.get("unmatched", 0),
-    duration_s=duration,
-    rows_duplicates=stats.get("duplicates", 0),
-)
-
-render_duplicates_note(stats.get("duplicates", 0))
-
-# Lignes ignorées et/ou erreurs de lot — un seul expander, replié par
-# défaut (spec §2.7 : un import réussi ne doit pas ressembler à un écran
-# d'erreur), qui délègue entièrement à render_skip_details (même
-# composant que l'onglet Outils / Logs — pas de logique dupliquée, et pas
-# de cas où des erreurs de lot sans skip associé restaient invisibles).
-n_skipped     = stats.get("skipped", 0)
-n_batch_errors = len(stats.get("errors") or [])
-if n_skipped or n_batch_errors:
-    label = (
-        f"Voir les lignes ignorées ({n_skipped:,})" if n_skipped
-        else f"⚠ {n_batch_errors} erreur(s) de lot"
+    import_summary(
+        rows_inserted=stats.get("inserted", 0),
+        rows_skipped=stats.get("skipped", 0),
+        rows_matched=stats.get("matched", 0),
+        rows_unmatched=stats.get("unmatched", 0),
+        duration_s=duration,
+        rows_duplicates=stats.get("duplicates", 0),
     )
-    with st.expander(label, expanded=False):
-        render_skip_details(
-            st.session_state.get("error_detail_payload"),
-            key_prefix=f"import_{st.session_state.batch_id}",
+
+    render_duplicates_note(stats.get("duplicates", 0))
+
+    # Lignes ignorées et/ou erreurs de lot — un seul expander, replié par
+    # défaut (spec §2.7 : un import réussi ne doit pas ressembler à un écran
+    # d'erreur), qui délègue entièrement à render_skip_details (même
+    # composant que l'onglet Outils / Logs — pas de logique dupliquée, et pas
+    # de cas où des erreurs de lot sans skip associé restaient invisibles).
+    n_skipped     = stats.get("skipped", 0)
+    n_batch_errors = len(stats.get("errors") or [])
+    if n_skipped or n_batch_errors:
+        label = (
+            f"Voir les lignes ignorées ({nombre(n_skipped)})" if n_skipped
+            else f"{nombre(n_batch_errors)} erreur(s) de lot"
         )
+        with st.expander(label, expanded=False, icon=":material/warning:"):
+            render_skip_details(
+                st.session_state.get("error_detail_payload"),
+                key_prefix=f"import_{st.session_state.batch_id}",
+            )
 
-# Navigation vers Matching si des verbatims sont sans catégorie
-if stats.get("unmatched", 0) > 0:
-    st.markdown("")
-    if st.button(
-        "Aller au Matching catégories →",
-        type="primary",
-        key="goto_matching",
-    ):
-        st.switch_page("pages/2_Matching.py")
+    # Navigation vers Matching si des verbatims sont sans catégorie
+    if stats.get("unmatched", 0) > 0:
+        if st.button(
+            "Ouvrir le matching des catégories",
+            type="primary",
+            icon=":material/arrow_forward:",
+            key="goto_matching",
+        ):
+            st.switch_page("pages/2_Matching.py")
 
-# Bouton pour recommencer un nouvel import
-st.markdown("")
-if st.button("Importer un autre fichier", key="reset_import"):
-    _supprimer_fichier_temp()
-    for k, v in _DEFAULTS.items():
-        st.session_state[k] = v
-    st.rerun()
+    # Bouton pour recommencer un nouvel import
+    if st.button("Importer un autre fichier", key="reset_import"):
+        _supprimer_fichier_temp()
+        for k, v in _DEFAULTS.items():
+            st.session_state[k] = v
+        st.rerun()

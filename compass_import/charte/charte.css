@@ -1,0 +1,85 @@
+/* ═══════════════════════════════════════════════════════════
+   Charte Consumer Voice — composants maison (v1.0)
+   Référence : verbatims_run/outils/rr_gabarit.html
+
+   Règle : le thème Streamlit (.streamlit/config.toml) fait l'essentiel.
+   Ce fichier ne style QUE les classes .cv-* créées par charte/composants.py.
+   Une seule exception, notée plus bas : les chiffres des métriques en chasse fixe.
+   Les variables --cv-* sont injectées par appliquer_charte() selon le thème actif.
+═══════════════════════════════════════════════════════════ */
+
+/* ── Bandeau d'en-tête : dégradé bleu de la charte ───────── */
+.cv-bandeau {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 20px;
+  background: linear-gradient(90deg, var(--cv-brand-deep) 0%, var(--cv-brand) 45%, var(--cv-brand-mid) 100%);
+  color: #fff; border-radius: var(--cv-radius-m);
+  padding: 14px 20px; margin: 0 0 20px; font-family: var(--cv-font);
+}
+.cv-bandeau svg { flex: none; }
+.cv-bandeau .cv-titres { display: flex; flex-direction: column; gap: 2px; margin-right: auto; min-width: 0; }
+.cv-bandeau .cv-appli { font-size: .8125rem; font-weight: 500; color: var(--cv-brand-sub); letter-spacing: .01em; }
+.cv-bandeau .cv-page { margin: 0; padding: 0; font-size: 1.3rem; font-weight: 700; line-height: 1.25; color: #fff; }
+.cv-bandeau .cv-sous-titre { margin: 2px 0 0; font-size: .9375rem; color: #fff; opacity: .92; }
+.cv-bandeau .cv-etiquette {
+  font-size: .8125rem; font-weight: 700; color: #fff; background: var(--cv-accent-ink);
+  border-radius: 999px; padding: 3px 12px; box-shadow: inset 0 -2px 0 var(--cv-accent); white-space: nowrap;
+}
+
+/* ── Fil d'Ariane ────────────────────────────────────────── */
+.cv-ariane ol { display: flex; flex-wrap: wrap; gap: 4px 8px; margin: 0 0 16px; padding: 0; list-style: none;
+  font-weight: 700; font-size: .9375rem; color: var(--cv-ink); }
+.cv-ariane li, .cv-etapes li { margin: 0; padding-left: 0; }
+.cv-ariane li + li::before { content: "/"; color: var(--cv-ink-3); margin-right: 8px; font-weight: 400; }
+.cv-ariane li[aria-current="page"] { color: var(--cv-ink-2); font-weight: 500; }
+
+/* ── Texte d'introduction sous un titre de section ──────── */
+.cv-lead { color: var(--cv-ink-2); margin: 0 0 12px; max-width: 78ch; }
+
+/* ── Encadré « à retenir » : fond cyan pâle, liseré cyan ─── */
+.cv-cle { background: var(--cv-accent-soft); border-left: 4px solid var(--cv-accent); border-radius: 0 var(--cv-radius-s) var(--cv-radius-s) 0;
+  padding: 12px 14px; margin: 0 0 16px; max-width: 80ch; color: var(--cv-ink); }
+.cv-cle p { margin: 0; }
+.cv-cle .cv-cle-titre { font-weight: 700; margin-bottom: 4px; }
+
+/* ── Étapes d'un parcours (import, export…) ──────────────── */
+.cv-etapes { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 20px; padding: 0; list-style: none; counter-reset: cv-etape; }
+.cv-etapes li { counter-increment: cv-etape; display: flex; align-items: center; gap: 8px;
+  padding: 6px 14px 6px 6px; border: 1px solid var(--cv-line); border-radius: 999px;
+  font-size: .9375rem; color: var(--cv-ink-2); background: var(--cv-page); }
+.cv-etapes li::before { content: counter(cv-etape); display: inline-flex; align-items: center; justify-content: center;
+  width: 26px; height: 26px; border-radius: 50%; font-weight: 700; font-size: .8125rem;
+  background: var(--cv-panel-2); color: var(--cv-ink); }
+.cv-etapes li.cv-fait { color: var(--cv-ink); }
+.cv-etapes li.cv-fait::before { content: "✓"; background: var(--cv-accent-ink); color: #fff; }
+.cv-etapes li.cv-courante { border: 2px solid var(--cv-accent); color: var(--cv-ink); font-weight: 700; padding: 5px 13px 5px 5px; }
+.cv-etapes li.cv-courante::before { background: var(--cv-accent-ink); color: #fff; }
+
+/* ── Carte de verbatim : liseré coloré selon le sentiment ── */
+.cv-verbatim { background: var(--cv-page); border: 1px solid var(--cv-line); border-left: 5px solid var(--cv-mix);
+  border-radius: var(--cv-radius-s); padding: 10px 14px; margin: 0 0 10px; max-width: 80ch; color: var(--cv-ink); }
+.cv-verbatim.cv-pos { border-left-color: var(--cv-pos); }
+.cv-verbatim.cv-neg { border-left-color: var(--cv-neg); }
+.cv-verbatim p { margin: 0 0 6px; }
+.cv-verbatim .cv-meta { font-size: .8125rem; color: var(--cv-ink-2); margin: 0; }
+.cv-verbatim details { font-size: .875rem; color: var(--cv-ink-2); margin-top: 4px; }
+.cv-verbatim details p { margin: 6px 0 0; }
+
+/* ── État vide ───────────────────────────────────────────── */
+.cv-vide { padding: 16px; background: var(--cv-panel); border-radius: var(--cv-radius-s); color: var(--cv-ink-2); margin: 0 0 16px; }
+
+/* ── Exception unique au périmètre .cv-* : chiffres des métriques en chasse fixe,
+      pour que les nombres s'alignent d'une carte à l'autre (comme .big dans le gabarit). ── */
+[data-testid="stMetricValue"] { font-variant-numeric: tabular-nums; }
+
+@media (max-width: 760px) {
+  .cv-bandeau { padding: 12px 14px; }
+  .cv-bandeau .cv-page { font-size: 1.1rem; }
+}
+@media (forced-colors: active) {
+  .cv-bandeau { border: 1px solid; }
+  .cv-verbatim { border-left-style: double; }
+}
+@media print {
+  .cv-bandeau { background: none; color: inherit; border: 1px solid; }
+  .cv-bandeau .cv-page, .cv-bandeau .cv-appli, .cv-bandeau .cv-sous-titre { color: inherit; }
+}

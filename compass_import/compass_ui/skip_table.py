@@ -18,6 +18,7 @@ Usage :
 import pandas as pd
 import streamlit as st
 
+from compass_ui.compass_ui import nombre
 from core.skip_report import parse_error_detail
 
 _CODE_LABELS: dict[str, str] = {
@@ -36,7 +37,7 @@ def _summary_line(skips_par_code: dict) -> str:
     parts = []
     for code, count in sorted(skips_par_code.items(), key=lambda kv: -kv[1]):
         label = _CODE_LABELS.get(code, code.lower())
-        parts.append(f"{count} {label}")
+        parts.append(f"{nombre(count)} {label}")
     return " · ".join(parts) if parts else "détail indisponible"
 
 
@@ -71,8 +72,9 @@ def render_skip_details(error_detail: dict | str | None, key_prefix: str) -> Non
 
         if parsed["skips_tronque"]:
             st.warning(
-                f"Seules les {len(skips):,} premières lignes sur "
-                f"{parsed['skips_total']:,} sont détaillées ci-dessous."
+                f"Seules les {nombre(len(skips))} premières lignes sur "
+                f"{nombre(parsed['skips_total'])} sont détaillées ci-dessous.",
+                icon=":material/warning:",
             )
 
         df_skips = pd.DataFrame(skips)
@@ -82,7 +84,6 @@ def render_skip_details(error_detail: dict | str | None, key_prefix: str) -> Non
 
         st.dataframe(
             df_skips[["ligne", "raison", "champ", "extrait"]],
-            use_container_width=True,
             hide_index=True,
             column_config={
                 "ligne":   st.column_config.NumberColumn("Ligne", width="small"),
@@ -96,7 +97,8 @@ def render_skip_details(error_detail: dict | str | None, key_prefix: str) -> Non
             index=False, encoding="utf-8-sig"
         )
         st.download_button(
-            label="📥 Télécharger le détail (CSV)",
+            label="Télécharger le détail en CSV",
+            icon=":material/download:",
             data=csv_export.encode("utf-8-sig"),
             file_name=f"lignes_ignorees_{key_prefix}.csv",
             mime="text/csv",
@@ -128,6 +130,7 @@ def render_duplicates_note(rows_duplicates: int) -> None:
     """
     if rows_duplicates > 0:
         st.info(
-            f"ℹ {rows_duplicates:,} ligne(s) déjà présente(s) en base "
-            "(non réimportées)."
+            f"{nombre(rows_duplicates)} ligne(s) déjà présente(s) en base "
+            "(non réimportées).",
+            icon=":material/info:",
         )
